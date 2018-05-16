@@ -36,6 +36,77 @@ namespace ns3 {
 
 NS_LOG_COMPONENT_DEFINE ("NetmapNetDevice");
 
+NetmapNetDeviceFdReader::NetmapNetDeviceFdReader ()
+  : m_bufferSize (65536), // Defaults to maximum TCP window size
+    m_nifp (0)
+{
+}
+
+void
+NetmapNetDeviceFdReader::SetBufferSize (uint32_t bufferSize)
+{
+  NS_LOG_FUNCTION (this << bufferSize);
+  m_bufferSize = bufferSize;
+}
+
+void
+NetmapNetDeviceFdReader::SetNetmapIfp (struct netmap_if *nifp)
+{
+  NS_LOG_FUNCTION (this << nifp);
+  m_nifp = nifp;
+}
+
+FdReader::Data
+NetmapNetDeviceFdReader::DoRead (void)
+{
+  NS_LOG_FUNCTION (this);
+
+  uint8_t *buf = (uint8_t *)malloc (m_bufferSize);
+  NS_ABORT_MSG_IF (buf == 0, "malloc() failed");
+
+  NS_LOG_LOGIC ("Calling read on fd " << m_fd);
+
+  struct netmap_ring *rxring;
+  uint16_t len = 0;
+  uint32_t rxRingIndex = 0;
+
+  // we have a packet in one of the receiver rings.
+  // we check for the first non empty receiver ring of a multiqueue device.
+  while (rxRingIndex < m_nifp->ni_rx_rings)
+    {
+      rxring = NETMAP_RXRING (m_nifp, rxRingIndex);
+
+      if (!nm_ring_empty (rxring))
+        {
+          uint32_t i = rxring->cur;
+          uint8_t *buffer = (uint8_t*) NETMAP_BUF (rxring, rxring->slot[i].buf_idx);
+          len = rxring->slot[i].len;
+          NS_LOG_DEBUG ("Received a packet of " << len << " bytes");
+
+          // copy buffer in the destination memory area
+          memcpy (buf, buffer, len);
+
+          // advance the netmap pointers
+          rxring->head = rxring->cur = nm_ring_next (rxring, i);
+
+          ioctl (m_fd, NIOCRXSYNC, NULL);
+
+          break;
+        }
+
+      rxRingIndex++;
+    }
+
+  if (len <= 0)
+    {
+      free (buf);
+      buf = 0;
+      len = 0;
+    }
+  NS_LOG_LOGIC ("Read " << len << " bytes on fd " << m_fd);
+  return FdReader::Data (buf, len);
+}
+
 NS_OBJECT_ENSURE_REGISTERED (NetmapNetDevice);
 
 TypeId
@@ -52,12 +123,8 @@ NetmapNetDevice::GetTypeId (void)
 NetmapNetDevice::NetmapNetDevice ()
 {
   NS_LOG_FUNCTION (this);
-  m_deviceName = "undefined";
   m_nifp = 0;
-  m_nTxRings = 0;
-  m_nRxRings = 0;
   m_nTxRingsSlots = 0;
-  m_nRxRingsSlots = 0;
   m_queue = 0;
   m_totalQueuedBytes = 0;
 }
@@ -68,94 +135,26 @@ NetmapNetDevice::~NetmapNetDevice ()
   m_waitingSlotThreadRun = false;
 }
 
-void
-NetmapNetDevice::SetDeviceName (std::string deviceName)
+Ptr<FdReader>
+NetmapNetDevice::DoCreateFdReader (void)
 {
   NS_LOG_FUNCTION (this);
 
-  m_deviceName = deviceName;
+  Ptr<NetmapNetDeviceFdReader> fdReader = Create<NetmapNetDeviceFdReader> ();
+  // 22 bytes covers 14 bytes Ethernet header with possible 8 bytes LLC/SNAP
+  fdReader->SetBufferSize (GetMtu () + 22);
+  fdReader->SetNetmapIfp (m_nifp);
+  return fdReader;
 }
 
 void
-NetmapNetDevice::StartDevice (void)
+NetmapNetDevice::DoFinishStoppingDevice (void)
 {
   NS_LOG_FUNCTION (this);
-  ns3::FdNetDevice::StartDevice ();
-
-}
-
-void
-NetmapNetDevice::StopDevice (void)
-{
-  NS_LOG_FUNCTION (this);
-  ns3::FdNetDevice::StopDevice ();
 
   m_waitingSlotThreadRun = false;
   m_queueStopped.SetCondition (true);
   m_queueStopped.Signal ();
-
-}
-
-bool
-NetmapNetDevice::NetmapOpen ()
-{
-  NS_LOG_FUNCTION (this);
-
-  if (m_deviceName == "undefined")
-    {
-      NS_FATAL_ERROR ("NetmapNetDevice: m_deviceName is not set");
-    }
-
-  if (m_fd == -1)
-    {
-      NS_FATAL_ERROR ("NetmapNetDevice: m_fd is not set");
-    }
-
-  struct nmreq nmr;
-  memset (&nmr, 0, sizeof (nmr));
-
-  nmr.nr_version = NETMAP_API;
-
-  // setting the interface name in the netmap request
-  strncpy (nmr.nr_name, m_deviceName.c_str (), m_deviceName.length ());
-
-  // switch the interface in netmap mode
-  int code = ioctl (m_fd, NIOCREGIF, &nmr);
-  if (code == -1)
-    {
-      NS_LOG_DEBUG ("Switching failed");
-      return false;
-    }
-
-  // memory mapping
-  uint8_t *memory = (uint8_t *) mmap (0, nmr.nr_memsize, PROT_WRITE | PROT_READ,
-                                      MAP_SHARED, m_fd, 0);
-
-  if (memory == MAP_FAILED)
-    {
-      NS_LOG_DEBUG ("Mapping failed");
-      return false;
-    }
-
-  // getting the base struct of the interface in netmap mode
-  m_nifp = NETMAP_IF (memory, nmr.nr_offset);
-
-  if (!m_nifp)
-    {
-      return false;
-    }
-
-  m_nTxRings = m_nifp->ni_tx_rings;
-  m_nRxRings = m_nifp->ni_rx_rings;
-  m_nTxRingsSlots = nmr.nr_tx_slots;
-  m_nRxRingsSlots = nmr.nr_rx_slots;
-
-  m_waitingSlotThreadRun = true;
-  m_waitingSlotThread = Create<SystemThread> (MakeCallback (&NetmapNetDevice::WaitingSlot, this));
-  m_waitingSlotThread->Start ();
-
-  return true;
-
 }
 
 uint32_t
@@ -194,6 +193,22 @@ NetmapNetDevice::GetSpaceInNetmapTxRing () const
   return nm_ring_space (txring);
 }
 
+void
+NetmapNetDevice::StartWaitingSlot (struct netmap_if *nifp, uint32_t nTxRingsSlots, uint32_t nRxRingsSlots)
+{
+  NS_LOG_FUNCTION (this << nifp);
+
+  m_nifp = nifp;
+  m_nTxRings = m_nifp->ni_tx_rings;
+  m_nRxRings = m_nifp->ni_rx_rings;
+  m_nTxRingsSlots = nTxRingsSlots;
+  m_nRxRingsSlots = nRxRingsSlots;
+
+  m_waitingSlotThreadRun = true;
+  m_waitingSlotThread = Create<SystemThread> (MakeCallback (&NetmapNetDevice::WaitingSlot, this));
+  m_waitingSlotThread->Start ();
+}
+
 // runs in a separate thread
 void
 NetmapNetDevice::WaitingSlot ()
@@ -203,7 +218,7 @@ NetmapNetDevice::WaitingSlot ()
   struct pollfd fds;
   memset (&fds, 0, sizeof(fds));
 
-  fds.fd = m_fd;
+  fds.fd = GetFileDescriptor ();
   fds.events = POLLOUT;
 
   struct netmap_ring *txring = NETMAP_TXRING (m_nifp, 0);
@@ -213,20 +228,22 @@ NetmapNetDevice::WaitingSlot ()
   while (m_waitingSlotThreadRun)
     {
       // we are waiting for the next queue stopped event
-      // in meanwhile, we periodically sync the netmap ring and notify about the transmitted bytes in the period
+      // in meanwhile, we periodically sync the netmap ring and notify about the
+      // transmitted bytes in the period
       while (!m_queueStopped.GetCondition ())
         {
           // we sync the netmap ring periodically.
           // traffic control can write packets during the period between two syncs.
-          ioctl (m_fd, NIOCTXSYNC, NULL);
+          ioctl (GetFileDescriptor (), NIOCTXSYNC, NULL);
 
-          // we need of a nearly periodic notification to queue limits of the transmitted bytes.
-          // we use this thread to notify about the transmitted bytes in the sleep period (alternatively, we can consider a
-          // periodic schedule of a function).
+          // we need a nearly periodic notification of the transmitted bytes to queue limits.
+          // we use this thread to notify about the transmitted bytes in the sleep
+          // period (alternatively, we can consider a periodic schedule of a function).
 
-          // we calculate the total transmitted bytes as differences between the total queued and the current in queue
-          // also, we calculate the transmitted bytes in the sleep period as difference between the current total transmitted
-          // and the previous total transmitted
+          // we calculate the total transmitted bytes as difference between the total
+          // queued and the current in queue
+          // also, we calculate the transmitted bytes in the sleep period as difference
+          // between the current total transmitted and the previous total transmitted
           uint32_t totalTransmittedBytes = m_totalQueuedBytes - GetBytesInNetmapTxRing ();
           uint32_t deltaBytes = totalTransmittedBytes - prevTotalTransmittedBytes;
           NS_LOG_DEBUG (deltaBytes << " delta transmitted bytes");
@@ -236,16 +253,18 @@ NetmapNetDevice::WaitingSlot ()
               m_queue->NotifyTransmittedBytes (deltaBytes);
             }
 
-          // we used a period to check and notify of 200 us; it is a value close to the interrupt coalescence
-          // period of a real device
+          // we used a period to check and notify of 200 us; it is a value close
+          // to the interrupt coalescence period of a real device
           m_queueStopped.TimedWait (200000); // ns
         }
       m_queueStopped.SetCondition (false);
 
       // we are blocked for the next slot available in the netmap ring.
-      // for netmap in emulated mode, if you disable the generic_txqdisc you are unblocked for the actual next slot available.
-      // conversely, without disabling the generic_txqdisc you are unblocked when in the generic_txqdisc there are no packets.
-      ioctl (m_fd, NIOCTXSYNC, NULL);
+      // for netmap in emulated mode, if you disable the generic_txqdisc you are
+      // unblocked for the actual next slot available.
+      // conversely, without disabling the generic_txqdisc you are unblocked when
+      // in the generic_txqdisc there are no packets.
+      ioctl (GetFileDescriptor (), NIOCTXSYNC, NULL);
 
       poll (&fds, 1, -1);
 
@@ -295,8 +314,8 @@ NetmapNetDevice::Write (uint8_t* buffer, size_t length)
       m_queue->NotifyQueuedBytes (length);
 
       // if there is no room for other packets then stop the queue.
-      // then, we wake up the thread to wait for the next slot available. in meanwhile, the main process can
-      // run separately.
+      // then, we wake up the thread to wait for the next slot available. In the
+      // meanwhile, the main process can run separately.
       if (nm_ring_space(txring) == 0)
         {
           m_queue->Stop ();
@@ -307,50 +326,6 @@ NetmapNetDevice::Write (uint8_t* buffer, size_t length)
     }
 
   return ret;
-}
-
-// runs in a separate thread
-ssize_t
-NetmapNetDevice::Read (uint8_t* buffer)
-{
-  NS_LOG_FUNCTION (this << buffer);
-
-  struct netmap_ring *rxring;
-
-  uint16_t lenght = 0;
-
-  int rxRingIndex = 0;
-  // we have a packet in one of the receiver rings.
-  // we check for the first non empty receiver ring of a multiqueue device.
-  while (rxRingIndex < m_nRxRings)
-    {
-      rxring = NETMAP_RXRING (m_nifp, rxRingIndex);
-
-      if (!nm_ring_empty (rxring))
-        {
-
-          uint32_t i   = rxring->cur;
-          uint8_t *buf = (uint8_t*) NETMAP_BUF (rxring, rxring->slot[i].buf_idx);
-          lenght = rxring->slot[i].len;
-          NS_LOG_DEBUG ("Received a packet of " << lenght << " bytes");
-
-          // copy buffer in the destination memory area
-          memcpy (buffer, buf, lenght);
-
-          // advance the netmap pointers
-          rxring->head = rxring->cur = nm_ring_next (rxring, i);
-
-          ioctl (m_fd, NIOCRXSYNC, NULL);
-
-          return lenght;
-
-        }
-
-      rxRingIndex++;
-    }
-
-  return lenght;
-
 }
 
 void
@@ -371,13 +346,6 @@ NetmapNetDevice::NotifyNewAggregate (void)
   m_queueInterface->SetTxQueuesN (1);
   m_queueInterface->CreateTxQueues ();
   m_queue = m_queueInterface->GetTxQueue (0);
-}
-
-Ptr<NetDeviceQueue>
-NetmapNetDevice::GetTxQueue () const
-{
-  NS_LOG_FUNCTION (this);
-  return m_queue;
 }
 
 } // namespace ns3

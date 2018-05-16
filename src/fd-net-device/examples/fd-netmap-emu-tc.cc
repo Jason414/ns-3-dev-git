@@ -67,7 +67,7 @@ TcPacketsInQueue (Ptr<QueueDisc> q, Ptr<NetmapNetDevice> d, Ptr<OutputStreamWrap
 {
   Simulator::Schedule (Seconds (0.2), &TcPacketsInQueue, q, d, stream);
    *stream->GetStream () << Simulator::Now ().GetSeconds () << " backlog " << q->GetNPackets () << "p " << q->GetNBytes () << "b "<< " dropped " 
-  << q->GetTotalDroppedPackets () << "p " << q->GetTotalDroppedBytes () << "b " << std::endl;
+  << q->GetStats ().nTotalDroppedPackets << "p " << q->GetStats ().nTotalDroppedBytes << "b " << std::endl;
 }
 
 void
@@ -156,9 +156,7 @@ main (int argc, char *argv[])
   // OUI flying around.  Be aware.
   //
   NS_LOG_INFO ("Create Device 0");
-  EmuFdNetDeviceHelper emu0;
-
-  emu0.SetNetmapMode ();
+  NetmapNetDeviceHelper emu0;
 
   emu0.SetDeviceName (deviceName0);
   NetDeviceContainer devices0 = emu0.Install (node);
@@ -166,9 +164,7 @@ main (int argc, char *argv[])
   device0->SetAttribute ("Address", mac0);
 
   NS_LOG_INFO ("Create Device 1");
-  EmuFdNetDeviceHelper emu1;
-
-  emu1.SetNetmapMode ();
+  NetmapNetDeviceHelper emu1;
 
   emu1.SetDeviceName (deviceName1);
   NetDeviceContainer devices1 = emu1.Install (node);

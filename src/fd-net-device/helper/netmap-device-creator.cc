@@ -23,6 +23,7 @@
 #include <sstream>
 #include <stdlib.h>
 #include <errno.h>
+#include <fcntl.h>
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -30,7 +31,6 @@
 #include <net/ethernet.h>
 #include <net/if.h>
 #include <netinet/in.h>
-#include <netpacket/packet.h>
 #include <arpa/inet.h>
 
 #include "creator-utils.h"
@@ -81,9 +81,9 @@ main (int argc, char *argv[])
   // though.  So all of these hoops are to allow us to execute the following
   // single line of code:
   //
-  LOG ("Creating raw socket");
-  int sock = socket (PF_PACKET, SOCK_RAW, htons (ETH_P_ALL));
-  ABORT_IF (sock == -1, "CreateSocket(): Unable to open raw socket", 1);
+  LOG ("Creating netmap fd");
+  int sock = open ("/dev/netmap", O_RDWR);
+  ABORT_IF (sock == -1, "CreateSocket(): Unable to open netmap fd", 1);
 
   //
   // Send the socket back to the emu net device so it can go about its business

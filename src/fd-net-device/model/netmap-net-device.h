@@ -27,6 +27,34 @@
 
 namespace ns3 {
 
+/**
+ * \ingroup fd-net-device
+ * \brief This class performs the actual data reading from the netmap ring.
+ */
+class NetmapNetDeviceFdReader : public FdReader
+{
+public:
+  NetmapNetDeviceFdReader ();
+
+  /**
+   * \brief Set size of the read buffer.
+   * \param bufferSize the size of the read buffer
+   */
+  void SetBufferSize (uint32_t bufferSize);
+
+  /**
+   * \brief Set size netmap interface representation.
+   * \param nifp the netmap interface representation
+   */
+  void SetNetmapIfp (struct netmap_if *nifp);
+
+private:
+  FdReader::Data DoRead (void);
+
+  uint32_t m_bufferSize;    //!< size of the read buffer
+  struct netmap_if *m_nifp; //!< Netmap interface representation
+};
+
 class Node;
 class NetDeviceQueueInterface;
 class SystemThread;
@@ -59,17 +87,6 @@ public:
    */
   virtual ~NetmapNetDevice ();
 
-  /**
-   * Set the emulated device name of this device.
-   * \param deviceName The emulated device name of this device.
-   */
-  void SetDeviceName (std::string deviceName);
-
-  /**
-   * Switch the interface in netmap mode.
-   */
-  bool NetmapOpen ();
-
   virtual void NotifyNewAggregate (void);
 
   /**
@@ -85,40 +102,22 @@ public:
   int GetSpaceInNetmapTxRing () const;
 
   /**
-   * This function write a packet into the netmap transmission ring.
-   * \param buffer pointer to the packet to write
-   * \param lenght lenght of the packet
-   * \return the number of writed bytes
+   * This function writes a packet into the netmap transmission ring.
    */
   virtual ssize_t Write (uint8_t *buffer, size_t length);
 
   /**
-   * Get the NetDeviceQueue associated with the netmap transmission ring.
-   * \returns The NetDeviceQueue associated with the netmap transmission ring.
+   * Start the thread waiting for an available slot.
+   *
+   * \param nifp the netmap interface representation
+   * \param nTxRingsSlots the number of slots in the transmission rings
+   * \param nRxRingsSlots the number of slots in the receiver rings
    */
-  Ptr<NetDeviceQueue> GetTxQueue () const;
-
-protected:
-
-  /**
-   * Spin up the device
-   */
-  void StartDevice (void);
-
-  /**
-   * Tear down the device
-   */
-  void StopDevice (void);
+  void StartWaitingSlot (struct netmap_if *nifp, uint32_t nTxRingsSlots, uint32_t nRxRingsSlots);
 
 private:
-
-
-  /**
-   * This function read a packet from the netmap receiver ring.
-   * \param buffer pointer to destination memory area
-   * \return the number of read bytes
-   */
-  virtual ssize_t Read (uint8_t * buffer);
+  Ptr<FdReader> DoCreateFdReader (void);
+  void DoFinishStoppingDevice (void);
 
   /**
    * \brief This function waits for the next available slot in the netmap tx ring.
@@ -126,15 +125,13 @@ private:
    */
   virtual void WaitingSlot ();
 
-  std::string m_deviceName; //!< Name of the netmap emulated device
-
   struct netmap_if *m_nifp; //!< Netmap interface representation
 
-  int m_nTxRings; //!< Number of transmission rings
-  int m_nRxRings; //!< Number of receiver rings
+  uint32_t m_nTxRings; //!< Number of transmission rings
+  uint32_t m_nRxRings; //!< Number of receiver rings
 
-  int m_nTxRingsSlots; //!< Number of slots in the transmission rings
-  int m_nRxRingsSlots; //!< Number of slots in the receiver rings
+  uint32_t m_nTxRingsSlots; //!< Number of slots in the transmission rings
+  uint32_t m_nRxRingsSlots; //!< Number of slots in the receiver rings
 
   Ptr<NetDeviceQueueInterface> m_queueInterface; //!< NetDevice queue interface
   Ptr<NetDeviceQueue> m_queue;                   //!< NetDevice queue
@@ -144,7 +141,6 @@ private:
   SystemCondition m_queueStopped;        //!< Waiting condition of the flow control thread
 
   uint32_t m_totalQueuedBytes;           //!< Total queued bytes
-
 };
 
 } // namespace ns3

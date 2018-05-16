@@ -105,6 +105,10 @@ Send (Ptr<FdNetDevice> device, int mode)
   int failed = 0;
 
   Ptr<NetmapNetDevice> dev = DynamicCast<NetmapNetDevice> (device);
+  NS_ABORT_IF (dev == 0);
+  Ptr<NetDeviceQueueInterface> ndqi = dev->GetObject<NetDeviceQueueInterface> ();
+  NS_ABORT_IF (ndqi == 0);
+  Ptr<NetDeviceQueue> ndq = ndqi->GetTxQueue (0);
 
   std::cout << ((mode == 0) ? "Writing" : "Sending") << std::endl;
 
@@ -126,7 +130,7 @@ Send (Ptr<FdNetDevice> device, int mode)
           // we send to device in case of netmap emulated device with
           // batch = dev->GetSpaceInNetmapTxRing ();
 
-          while (dev->GetTxQueue ()->IsStopped ())
+          while (ndq->IsStopped ())
             {
               // we are waiting for available slots in the
               // netmap ring
@@ -214,13 +218,7 @@ main (int argc, char *argv[])
 
 
   NS_LOG_INFO ("Create Device");
-  EmuFdNetDeviceHelper emu;
-
-  // set the netmap emulation mode
-  if (netmapMode)
-    {
-      emu.SetNetmapMode ();
-    }
+  NetmapNetDeviceHelper emu;
 
   emu.SetDeviceName (deviceName);
   NetDeviceContainer devices = emu.Install (node);

@@ -17,8 +17,8 @@
  *
  */
 
-#ifndef EMU_FD_NET_DEVICE_HELPER_H
-#define EMU_FD_NET_DEVICE_HELPER_H
+#ifndef NETMAP_NET_DEVICE_HELPER_H
+#define NETMAP_NET_DEVICE_HELPER_H
 
 #include <string>
 
@@ -31,20 +31,22 @@
 
 namespace ns3 {
 
+class NetmapNetDevice;
+
 /**
  * \ingroup fd-net-device
  * \brief build a set of FdNetDevice objects attached to a physical network
  * interface
  *
  */
-class EmuFdNetDeviceHelper : public FdNetDeviceHelper
+class NetmapNetDeviceHelper : public FdNetDeviceHelper
 {
 public:
   /**
-   * Construct a EmuFdNetDeviceHelper.
+   * Construct a NetmapNetDeviceHelper.
    */
-  EmuFdNetDeviceHelper ();
-  virtual ~EmuFdNetDeviceHelper ()
+  NetmapNetDeviceHelper ();
+  virtual ~NetmapNetDeviceHelper ()
   {
   }
 
@@ -86,6 +88,14 @@ protected:
   virtual int CreateFileDescriptor (void) const;
 
   /**
+   * Switch the interface in netmap mode.
+   *
+   * \param fd the file descriptor
+   * \param device the netmap netdevice
+   */
+  void NetmapOpen (int fd, Ptr<NetmapNetDevice> device) const;
+
+  /**
    * The unix/linux name of the underlying device (e.g., eth0)
    */
   std::string m_deviceName;
@@ -93,4 +103,4 @@ protected:
 
 } // namespace ns3
 
-#endif /* EMU_FD_NET_DEVICE_HELPER_H */
+#endif /* NETMAP_NET_DEVICE_HELPER_H */

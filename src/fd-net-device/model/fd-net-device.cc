@@ -45,8 +45,7 @@ namespace ns3 {
 NS_LOG_COMPONENT_DEFINE ("FdNetDevice");
 
 FdNetDeviceFdReader::FdNetDeviceFdReader ()
-  : m_device (0),
-    m_bufferSize (65536) // Defaults to maximum TCP window size
+  : m_bufferSize (65536) // Defaults to maximum TCP window size
 {
 }
 
@@ -65,14 +64,7 @@ FdReader::Data FdNetDeviceFdReader::DoRead (void)
   NS_ABORT_MSG_IF (buf == 0, "malloc() failed");
 
   NS_LOG_LOGIC ("Calling read on fd " << m_fd);
-
-  ssize_t len = 0;
-
-  if (m_device)
-    {
-      len = m_device->Read (buf);
-    }
-
+  ssize_t len = read (m_fd, buf, m_bufferSize);
   if (len <= 0)
     {
       free (buf);
@@ -81,18 +73,6 @@ FdReader::Data FdNetDeviceFdReader::DoRead (void)
     }
   NS_LOG_LOGIC ("Read " << len << " bytes on fd " << m_fd);
   return FdReader::Data (buf, len);
-}
-
-void
-FdNetDeviceFdReader::SetFdNetDevice (Ptr< FdNetDevice> device)
-{
-  NS_LOG_FUNCTION (this << device);
-
-  if (device != 0)
-    {
-      m_device = device;
-    }
-
 }
 
 NS_OBJECT_ENSURE_REGISTERED (FdNetDevice);
@@ -186,11 +166,11 @@ FdNetDevice::GetTypeId (void)
 }
 
 FdNetDevice::FdNetDevice ()
-  : m_fd (-1),
-    m_node (0),
+  : m_node (0),
     m_ifIndex (0),
     // Defaults to Ethernet v2 MTU
     m_mtu (1500),
+    m_fd (-1),
     m_fdReader (0),
     m_isBroadcast (true),
     m_isMulticast (false),
@@ -279,13 +259,34 @@ FdNetDevice::StartDevice (void)
   //
   m_nodeId = GetNode ()->GetId ();
 
-  m_fdReader = Create<FdNetDeviceFdReader> ();
-  // 22 bytes covers 14 bytes Ethernet header with possible 8 bytes LLC/SNAP
-  m_fdReader->SetFdNetDevice (this);
-  m_fdReader->SetBufferSize (m_mtu + 22);
+  m_fdReader = DoCreateFdReader ();
   m_fdReader->Start (m_fd, MakeCallback (&FdNetDevice::ReceiveCallback, this));
 
   NotifyLinkUp ();
+}
+
+Ptr<FdReader>
+FdNetDevice::DoCreateFdReader (void)
+{
+  NS_LOG_FUNCTION (this);
+
+  Ptr<FdNetDeviceFdReader> fdReader = Create<FdNetDeviceFdReader> ();
+  // 22 bytes covers 14 bytes Ethernet header with possible 8 bytes LLC/SNAP
+  fdReader->SetBufferSize (m_mtu + 22);
+  return fdReader;
+}
+
+int
+FdNetDevice::GetFd (void) const
+{
+  NS_LOG_FUNCTION (this);
+  return m_fd;
+}
+
+void
+FdNetDevice::DoFinishStoppingDevice (void)
+{
+  NS_LOG_FUNCTION (this);
 }
 
 void
@@ -304,6 +305,8 @@ FdNetDevice::StopDevice (void)
       close (m_fd);
       m_fd = -1;
     }
+
+  DoFinishStoppingDevice ();
 }
 
 void
@@ -628,22 +631,19 @@ FdNetDevice::Write (uint8_t *buffer, size_t length)
   return write (m_fd, buffer, length);
 }
 
-// runs in a separate thread
-ssize_t
-FdNetDevice::Read (uint8_t* buffer)
-{
-  NS_LOG_FUNCTION (this << buffer);
-
-  return read (m_fd, buffer, m_mtu + 22);
-}
-
 void
 FdNetDevice::SetFileDescriptor (int fd)
 {
-  if (fd > 0)
+  if (m_fd == -1 and fd > 0)
     {
       m_fd = fd;
     }
+}
+
+int
+FdNetDevice::GetFileDescriptor (void) const
+{
+  return m_fd;
 }
 
 void

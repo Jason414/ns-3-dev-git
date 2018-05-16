@@ -124,10 +124,10 @@ main (int argc, char *argv[])
 
   Ipv4Address remoteIp (remote.c_str ());
   // the OS IP for the eth0 interfaces is 10.0.1.1, and we set the ns-3 IP for eth0 to 10.0.1.11
-  Ipv4Address localIp ("10.0.1.11");
+  Ipv4Address localIp ("143.225.28.188");
   NS_ABORT_MSG_IF (localIp == "1.2.3.4", "You must change the local IP address before running this example");
 
-  Ipv4Mask localMask ("255.255.255.0");
+  Ipv4Mask localMask ("255.255.255.128");
 
   //
   // Since we are using a real piece of hardware we need to use the realtime
@@ -169,10 +169,7 @@ main (int argc, char *argv[])
   // OUI flying around.  Be aware.
   //
   NS_LOG_INFO ("Create Device");
-  EmuFdNetDeviceHelper emu;
-
-  // set the netmap emulation mode
-  emu.SetNetmapMode ();
+  NetmapNetDeviceHelper emu;
 
   emu.SetDeviceName (deviceName);
   NetDeviceContainer devices = emu.Install (node);
@@ -224,7 +221,7 @@ main (int argc, char *argv[])
   // the default gateway on your host and add it below, replacing the
   // "1.2.3.4" string.
   //
-  Ipv4Address gateway ("10.0.1.2");
+  Ipv4Address gateway ("143.225.28.254");
   NS_ABORT_MSG_IF (gateway == "1.2.3.4", "You must change the gateway IP address before running this example");
 
   Ipv4StaticRoutingHelper ipv4RoutingHelper;

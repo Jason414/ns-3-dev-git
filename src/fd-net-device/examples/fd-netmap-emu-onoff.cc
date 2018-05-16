@@ -162,13 +162,7 @@ main (int argc, char *argv[])
   Ptr<Node> node = CreateObject<Node> ();
 
   NS_LOG_INFO ("Create Device");
-  EmuFdNetDeviceHelper emu;
-
-  // set the netmap emulation mode
-  if (netmapMode)
-    {
-      emu.SetNetmapMode ();
-    }
+  NetmapNetDeviceHelper emu;
 
   emu.SetDeviceName (deviceName);
   NetDeviceContainer devices = emu.Install (node);

@@ -41,7 +41,6 @@
 
 namespace ns3 {
 
-class FdNetDevice;
 
 /**
  * \defgroup fd-net-device File Descriptor Network Device
@@ -56,7 +55,6 @@ class FdNetDevice;
 class FdNetDeviceFdReader : public FdReader
 {
 public:
-
   FdNetDeviceFdReader ();
 
   /**
@@ -64,15 +62,10 @@ public:
    */
   void SetBufferSize (uint32_t bufferSize);
 
-  void SetFdNetDevice (Ptr<FdNetDevice> device);
-
 private:
   FdReader::Data DoRead (void);
 
-  Ptr<FdNetDevice> m_device;
-
   uint32_t m_bufferSize; //!< size of the read buffer
-
 };
 
 class Node;
@@ -91,8 +84,6 @@ class Node;
 class FdNetDevice : public NetDevice
 {
 public:
-  friend FdNetDeviceFdReader;
-
   /**
    * \brief Get the type ID.
    * \return the object TypeId
@@ -146,6 +137,12 @@ public:
   void SetFileDescriptor (int fd);
 
   /**
+   * Get the associated file descriptor.
+   *
+   */
+  int GetFileDescriptor (void) const;
+
+  /**
    * Set a start time for the device.
    *
    * @param tStart the start time
@@ -196,15 +193,31 @@ public:
    */
   virtual void SetIsMulticast (bool multicast);
 
+  /**
+   * Write data to the device
+   * \param buffer pointer to the packet to write
+   * \param lenght lenght of the packet
+   * \return the number of written bytes
+   */
   virtual ssize_t Write (uint8_t *buffer, size_t length);
 
 protected:
   virtual void DoDispose (void);
 
   /**
-   * The file descriptor used for receive/send network traffic.
+   * Get the file descriptor used for receive/send network traffic.
+   * \return the file descriptor used for receive/send network traffic.
    */
-  int m_fd;
+  int GetFd (void) const;
+
+private:
+  /**
+   * \brief Copy constructor
+   *
+   * Defined and unimplemented to avoid misuse as suggested in
+   * http://www.nsnam.org/wiki/NS-3_Python_Bindings#.22invalid_use_of_incomplete_type.22
+   */
+  FdNetDevice (FdNetDevice const &);
 
   /**
    * Spin up the device
@@ -216,17 +229,16 @@ protected:
    */
   void StopDevice (void);
 
-private:
-
-  virtual ssize_t Read (uint8_t *buffer);
+  /**
+   * Create the FdReader object
+   * \return the created FdReader object
+   */
+  virtual Ptr<FdReader> DoCreateFdReader (void);
 
   /**
-   * \brief Copy constructor
-   *
-   * Defined and unimplemented to avoid misuse as suggested in
-   * http://www.nsnam.org/wiki/NS-3_Python_Bindings#.22invalid_use_of_incomplete_type.22
+   * Complete additional actions, if any, to tear down the device
    */
-  FdNetDevice (FdNetDevice const &);
+  virtual void DoFinishStoppingDevice (void);
 
   /**
    * Callback to invoke when a new frame is received
@@ -273,9 +285,14 @@ private:
   uint16_t m_mtu;
 
   /**
+   * The file descriptor used for receive/send network traffic.
+   */
+  int m_fd;
+
+  /**
    * Reader for the file descriptor.
    */
-  Ptr<FdNetDeviceFdReader> m_fdReader;
+  Ptr<FdReader> m_fdReader;
 
   /**
    * The net device mac address.
