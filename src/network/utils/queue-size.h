@@ -165,6 +165,13 @@ public:
   bool operator != (const QueueSize& rhs) const;
 
   /**
+   * \return the queue size resulting from the sum operation
+   *
+   * \param rhs the queue size to sum to this queue size
+   */
+  const QueueSize operator + (const QueueSize& rhs) const;
+
+  /**
    * Get the underlying unit
    * \return The underlying unit
    */

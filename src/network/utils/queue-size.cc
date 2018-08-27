@@ -166,6 +166,13 @@ bool QueueSize::operator != (const QueueSize& rhs) const
   return m_value!=rhs.m_value;
 }
 
+const QueueSize QueueSize::operator + (const QueueSize& rhs) const
+{
+  NS_ABORT_MSG_IF (m_unit != rhs.GetUnit (), "Cannot sum heterogeneous sizes");
+
+  return QueueSize (m_unit, m_value + rhs.m_value);
+}
+
 QueueSizeUnit QueueSize::GetUnit () const
 {
   NS_LOG_FUNCTION (this);
