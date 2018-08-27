@@ -142,8 +142,9 @@ SimpleNetDeviceHelper::InstallPriv (Ptr<Node> node, Ptr<SimpleChannel> channel) 
   device->SetQueue (queue);
   NS_ASSERT_MSG (!m_pointToPointMode || (channel->GetNDevices () <= 2), "Device set to PointToPoint and more than 2 devices on the channel.");
   // Aggregate a NetDeviceQueueInterface object
-  Ptr<NetDeviceQueueInterface> ndqi = CreateObject<NetDeviceQueueInterface> ();
-  ndqi->GetTxQueue (0)->ConnectQueueTraces (queue);
+  Ptr<NetDeviceQueueInterface> ndqi = CreateObjectWithAttributes<NetDeviceQueueInterface>
+                                        ("ReceiverStatusManagerType", TypeIdValue (NetDeviceQueueStatusManager::GetTypeId ()));
+  DynamicCast<NetDeviceQueueStatusManager> (ndqi->GetTxQueue (0))->ConnectQueueTraces (queue);
   device->AggregateObject (ndqi);
   return device;
 }

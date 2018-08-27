@@ -688,33 +688,35 @@ WifiHelper::Install (const WifiPhyHelper &phyHelper,
           rmac->GetAttributeFailSafe ("QosSupported", qosSupported);
           if (qosSupported.Get ())
             {
-              ndqi = CreateObjectWithAttributes<NetDeviceQueueInterface> ("NTxQueues",
-                                                                          UintegerValue (4));
+              ndqi = CreateObjectWithAttributes<NetDeviceQueueInterface>
+                  ("ReceiverStatusManagerType", TypeIdValue (NetDeviceQueueStatusManager::GetTypeId ()),
+                   "NTxQueues", UintegerValue (4));
 
               rmac->GetAttributeFailSafe ("BE_Txop", ptr);
               wmq = ptr.Get<QosTxop> ()->GetWifiMacQueue ();
-              ndqi->GetTxQueue (0)->ConnectQueueTraces (wmq);
+              DynamicCast<NetDeviceQueueStatusManager> (ndqi->GetTxQueue (0))->ConnectQueueTraces (wmq);
 
               rmac->GetAttributeFailSafe ("BK_Txop", ptr);
               wmq = ptr.Get<QosTxop> ()->GetWifiMacQueue ();
-              ndqi->GetTxQueue (1)->ConnectQueueTraces (wmq);
+              DynamicCast<NetDeviceQueueStatusManager> (ndqi->GetTxQueue (1))->ConnectQueueTraces (wmq);
 
               rmac->GetAttributeFailSafe ("VI_Txop", ptr);
               wmq = ptr.Get<QosTxop> ()->GetWifiMacQueue ();
-              ndqi->GetTxQueue (2)->ConnectQueueTraces (wmq);
+              DynamicCast<NetDeviceQueueStatusManager> (ndqi->GetTxQueue (2))->ConnectQueueTraces (wmq);
 
               rmac->GetAttributeFailSafe ("VO_Txop", ptr);
               wmq = ptr.Get<QosTxop> ()->GetWifiMacQueue ();
-              ndqi->GetTxQueue (3)->ConnectQueueTraces (wmq);
+              DynamicCast<NetDeviceQueueStatusManager> (ndqi->GetTxQueue (3))->ConnectQueueTraces (wmq);
               ndqi->SetSelectQueueCallback (m_selectQueueCallback);
             }
           else
             {
-              ndqi = CreateObject<NetDeviceQueueInterface> ();
+              ndqi = CreateObjectWithAttributes<NetDeviceQueueInterface> ("ReceiverStatusManagerType",
+                                                                          TypeIdValue (NetDeviceQueueStatusManager::GetTypeId ()));
 
               rmac->GetAttributeFailSafe ("Txop", ptr);
               wmq = ptr.Get<Txop> ()->GetWifiMacQueue ();
-              ndqi->GetTxQueue (0)->ConnectQueueTraces (wmq);
+              DynamicCast<NetDeviceQueueStatusManager> (ndqi->GetTxQueue (0))->ConnectQueueTraces (wmq);
             }
           device->AggregateObject (ndqi);
         }

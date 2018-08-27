@@ -390,7 +390,9 @@ TrafficControlHelper::Install (Ptr<NetDevice> d)
       for (uint8_t i = 0; i < ndqi->GetNTxQueues (); i++)
         {
           Ptr<QueueLimits> ql = m_queueLimitsFactory.Create<QueueLimits> ();
-          ndqi->GetTxQueue (i)->SetQueueLimits (ql);
+          Ptr<NetDeviceQueueStatusManager> ndq = DynamicCast<NetDeviceQueueStatusManager> (ndqi->GetTxQueue (i));
+          NS_ASSERT (ndq);
+          ndq->SetQueueLimits (ql);
         }
     }
 
@@ -424,7 +426,9 @@ TrafficControlHelper::Uninstall (Ptr<NetDevice> d)
   NS_ASSERT (ndqi);
   for (uint8_t i = 0; i < ndqi->GetNTxQueues (); i++)
     {
-      ndqi->GetTxQueue (i)->SetQueueLimits (0);
+      Ptr<NetDeviceQueueStatusManager> ndq = DynamicCast<NetDeviceQueueStatusManager> (ndqi->GetTxQueue (i));
+      NS_ASSERT (ndq);
+      ndq->SetQueueLimits (0);
     }
 }
 

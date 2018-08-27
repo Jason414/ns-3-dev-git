@@ -217,7 +217,7 @@ int main (int argc, char *argv[])
   Ipv4InterfaceContainer interfacesBottleneck = address.Assign (devicesBottleneckLink);
 
   Ptr<NetDeviceQueueInterface> interface = devicesBottleneckLink.Get (0)->GetObject<NetDeviceQueueInterface> ();
-  Ptr<NetDeviceQueue> queueInterface = interface->GetTxQueue (0);
+  Ptr<NetDeviceQueueStatusManager> queueInterface = DynamicCast<NetDeviceQueueStatusManager> (interface->GetTxQueue (0));
   Ptr<DynamicQueueLimits> queueLimits = StaticCast<DynamicQueueLimits> (queueInterface->GetQueueLimits ());
 
   AsciiTraceHelper ascii;
