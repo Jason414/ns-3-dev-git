@@ -912,7 +912,7 @@ bool
 CsmaNetDevice::IsLinkUp (void) const
 {
   NS_LOG_FUNCTION_NOARGS ();
-  return m_linkUp;
+  return m_channel->IsActive (m_deviceId);
 }
 
 void
@@ -989,12 +989,12 @@ CsmaNetDevice::SendFrom (Ptr<Packet> packet, const Address& src, const Address& 
   NS_LOG_LOGIC ("UID is " << packet->GetUid () << ")");
   NS_LOG_LOGIC ("Device ID is " << m_deviceId);
 
-  NS_ASSERT (IsLinkUp ());
+//   NS_ASSERT (IsLinkUp ());
 
   //
   // Only transmit if send side of net device is enabled
   //
-  if (IsSendEnabled () == false)
+  if (IsLinkUp () == false || IsSendEnabled () == false)
     {
       m_macTxDropTrace (packet);
       return false;
