@@ -122,6 +122,13 @@ public:
    *         false otherwise
    */
   bool IsMultiTid (void) const;
+  /**
+   * Check if the current ACK policy is multi-STA.
+   *
+   * \return true if the current ACK policy is multi-STA,
+   *         false otherwise
+   */
+  bool IsMultiSta (void) const;
 
   /**
    * Return the starting sequence control.
@@ -161,6 +168,7 @@ private:
   bool m_barAckPolicy; ///< bar ack policy
   bool m_multiTid; ///< multi TID
   bool m_compressed; ///< compressed
+  bool m_multiSta; ///< multi STA
   uint16_t m_tidInfo; ///< TID info
   uint16_t m_startingSeq; ///< starting seq
 };
@@ -262,6 +270,13 @@ public:
    *         false otherwise
    */
   bool IsMultiTid (void) const;
+  /**
+   * Check if the current ACK policy is multi-STA.
+   *
+   * \return true if the current ACK policy is multi-STA,
+   *         false otherwise
+   */
+  bool IsMultiSta (void) const;
 
   /**
    * Set the bitmap that the packet with the given sequence
@@ -394,6 +409,7 @@ private:
   bool m_baAckPolicy; ///< BA ack policy
   bool m_multiTid; ///< multi TID
   bool m_compressed; ///< compressed
+  bool m_multiSta; ///< multi STA
   uint16_t m_tidInfo; ///< TID info
   uint16_t m_startingSeq; ///< starting seq
 

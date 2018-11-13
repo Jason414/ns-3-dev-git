@@ -32,7 +32,8 @@ NS_OBJECT_ENSURE_REGISTERED (CtrlBAckRequestHeader);
 CtrlBAckRequestHeader::CtrlBAckRequestHeader ()
   : m_barAckPolicy (false),
     m_multiTid (false),
-    m_compressed (false)
+    m_compressed (false),
+    m_multiSta (false)
 {
 }
 
@@ -70,11 +71,16 @@ CtrlBAckRequestHeader::GetSerializedSize () const
   size += 2; //Bar control
   if (!m_multiTid)
     {
+      // basic and compressed block ack
       size += 2; //Starting sequence control
     }
-  else if (m_compressed)
+  else if (m_compressed && !m_multiSta)
     {
       size += (2 + 2) * (m_tidInfo + 1);  //Multi-tid block ack
+    }
+  else if (m_compressed && m_multiSta)
+    {
+      // TODO Multi-sta block ack
     }
   else
     {
@@ -92,9 +98,13 @@ CtrlBAckRequestHeader::Serialize (Buffer::Iterator start) const
     {
       i.WriteHtolsbU16 (GetStartingSequenceControl ());
     }
-  else if (m_compressed)
+  else if (m_compressed && !m_multiSta)
     {
       NS_FATAL_ERROR ("Multi-tid block ack is not supported.");
+    }
+  else if (m_compressed && m_multiSta)
+    {
+      NS_FATAL_ERROR ("Multi-sta block ack is not supported.");
     }
   else
     {
@@ -111,9 +121,13 @@ CtrlBAckRequestHeader::Deserialize (Buffer::Iterator start)
     {
       SetStartingSequenceControl (i.ReadLsbtohU16 ());
     }
-  else if (m_compressed)
+  else if (m_compressed && !m_multiSta)
     {
       NS_FATAL_ERROR ("Multi-tid block ack is not supported.");
+    }
+  else if (m_compressed && m_multiSta)
+    {
+      NS_FATAL_ERROR ("Multi-sta block ack is not supported.");
     }
   else
     {
@@ -138,6 +152,10 @@ CtrlBAckRequestHeader::GetBarControl (void) const
     {
       res |= (0x1 << 2);
     }
+  if (m_multiSta)
+    {
+      res |= (0x1 << 4);
+    }
   res |= (m_tidInfo << 12) & (0xf << 12);
   return res;
 }
@@ -148,6 +166,7 @@ CtrlBAckRequestHeader::SetBarControl (uint16_t bar)
   m_barAckPolicy = ((bar & 0x01) == 1) ? true : false;
   m_multiTid = (((bar >> 1) & 0x01) == 1) ? true : false;
   m_compressed = (((bar >> 2) & 0x01) == 1) ? true : false;
+  m_multiSta = (((bar >> 4) & 0x01) == 1) ? true : false;
   m_tidInfo = (bar >> 12) & 0x0f;
 }
 
@@ -177,14 +196,22 @@ CtrlBAckRequestHeader::SetType (BlockAckType type)
     case BASIC_BLOCK_ACK:
       m_multiTid = false;
       m_compressed = false;
+      m_multiSta = false;
       break;
     case COMPRESSED_BLOCK_ACK:
       m_multiTid = false;
       m_compressed = true;
+      m_multiSta = false;
       break;
     case MULTI_TID_BLOCK_ACK:
       m_multiTid = true;
       m_compressed = true;
+      m_multiSta = false;
+      break;
+    case MULTI_STA_BLOCK_ACK:
+      m_multiTid = true;
+      m_compressed = true;
+      m_multiSta = true;
       break;
     default:
       NS_FATAL_ERROR ("Invalid variant type");
@@ -226,19 +253,25 @@ CtrlBAckRequestHeader::GetStartingSequence (void) const
 bool
 CtrlBAckRequestHeader::IsBasic (void) const
 {
-  return (!m_multiTid && !m_compressed) ? true : false;
+  return (!m_multiTid && !m_compressed && !m_multiSta) ? true : false;
 }
 
 bool
 CtrlBAckRequestHeader::IsCompressed (void) const
 {
-  return (!m_multiTid && m_compressed) ? true : false;
+  return (!m_multiTid && m_compressed && !m_multiSta) ? true : false;
 }
 
 bool
 CtrlBAckRequestHeader::IsMultiTid (void) const
 {
-  return (m_multiTid && m_compressed) ? true : false;
+  return (m_multiTid && m_compressed && !m_multiSta) ? true : false;
+}
+
+bool
+CtrlBAckRequestHeader::IsMultiSta (void) const
+{
+  return (m_multiTid && m_compressed && m_multiSta) ? true : false;
 }
 
 
@@ -251,7 +284,8 @@ NS_OBJECT_ENSURE_REGISTERED (CtrlBAckResponseHeader);
 CtrlBAckResponseHeader::CtrlBAckResponseHeader ()
   : m_baAckPolicy (false),
     m_multiTid (false),
-    m_compressed (false)
+    m_compressed (false),
+    m_multiSta (false)
 {
   memset (&bitmap, 0, sizeof (bitmap));
 }
@@ -301,9 +335,13 @@ CtrlBAckResponseHeader::GetSerializedSize (void) const
     }
   else
     {
-      if (m_compressed)
+      if (m_compressed && !m_multiSta)
         {
           size += (2 + 2 + 8) * (m_tidInfo + 1); //Multi-tid block ack
+        }
+      else if (m_compressed && m_multiSta)
+        {
+          // TODO Multi-sta block ack
         }
       else
         {
@@ -323,9 +361,13 @@ CtrlBAckResponseHeader::Serialize (Buffer::Iterator start) const
       i.WriteHtolsbU16 (GetStartingSequenceControl ());
       i = SerializeBitmap (i);
     }
-  else if (m_compressed)
+  else if (m_compressed && !m_multiSta)
     {
       NS_FATAL_ERROR ("Multi-tid block ack is not supported.");
+    }
+  else if (m_compressed && m_multiSta)
+    {
+      NS_FATAL_ERROR ("Multi-sta block ack is not supported.");
     }
   else
     {
@@ -343,9 +385,13 @@ CtrlBAckResponseHeader::Deserialize (Buffer::Iterator start)
       SetStartingSequenceControl (i.ReadLsbtohU16 ());
       i = DeserializeBitmap (i);
     }
-  else if (m_compressed)
+  else if (m_compressed && !m_multiSta)
     {
       NS_FATAL_ERROR ("Multi-tid block ack is not supported.");
+    }
+  else if (m_compressed && m_multiSta)
+    {
+      NS_FATAL_ERROR ("Multi-sta block ack is not supported.");
     }
   else
     {
@@ -368,14 +414,22 @@ CtrlBAckResponseHeader::SetType (BlockAckType type)
     case BASIC_BLOCK_ACK:
       m_multiTid = false;
       m_compressed = false;
+      m_multiSta = false;
       break;
     case COMPRESSED_BLOCK_ACK:
       m_multiTid = false;
       m_compressed = true;
+      m_multiSta = false;
       break;
     case MULTI_TID_BLOCK_ACK:
       m_multiTid = true;
       m_compressed = true;
+      m_multiSta = false;
+      break;
+    case MULTI_STA_BLOCK_ACK:
+      m_multiTid = true;
+      m_compressed = true;
+      m_multiSta = true;
       break;
     default:
       NS_FATAL_ERROR ("Invalid variant type");
@@ -417,19 +471,25 @@ CtrlBAckResponseHeader::GetStartingSequence (void) const
 bool
 CtrlBAckResponseHeader::IsBasic (void) const
 {
-  return (!m_multiTid && !m_compressed) ? true : false;
+  return (!m_multiTid && !m_compressed && !m_multiSta) ? true : false;
 }
 
 bool
 CtrlBAckResponseHeader::IsCompressed (void) const
 {
-  return (!m_multiTid && m_compressed) ? true : false;
+  return (!m_multiTid && m_compressed && !m_multiSta) ? true : false;
 }
 
 bool
 CtrlBAckResponseHeader::IsMultiTid (void) const
 {
-  return (m_multiTid && m_compressed) ? true : false;
+  return (m_multiTid && m_compressed && !m_multiSta) ? true : false;
+}
+
+bool
+CtrlBAckResponseHeader::IsMultiSta (void) const
+{
+  return (m_multiTid && m_compressed && m_multiSta) ? true : false;
 }
 
 uint16_t
@@ -448,6 +508,10 @@ CtrlBAckResponseHeader::GetBaControl (void) const
     {
       res |= (0x1 << 2);
     }
+  if (m_multiSta)
+    {
+      res |= (0x1 << 4);
+    }
   res |= (m_tidInfo << 12) & (0xf << 12);
   return res;
 }
@@ -458,6 +522,7 @@ CtrlBAckResponseHeader::SetBaControl (uint16_t ba)
   m_baAckPolicy = ((ba & 0x01) == 1) ? true : false;
   m_multiTid = (((ba >> 1) & 0x01) == 1) ? true : false;
   m_compressed = (((ba >> 2) & 0x01) == 1) ? true : false;
+  m_multiSta = (((ba >> 4) & 0x01) == 1) ? true : false;
   m_tidInfo = (ba >> 12) & 0x0f;
 }
 
@@ -493,9 +558,13 @@ CtrlBAckResponseHeader::SerializeBitmap (Buffer::Iterator start) const
     }
   else
     {
-      if (m_compressed)
+      if (m_compressed && !m_multiSta)
         {
           NS_FATAL_ERROR ("Multi-tid block ack is not supported.");
+        }
+      else if (m_compressed && m_multiSta)
+        {
+          NS_FATAL_ERROR ("Multi-sta block ack is not supported.");
         }
       else
         {
@@ -525,9 +594,13 @@ CtrlBAckResponseHeader::DeserializeBitmap (Buffer::Iterator start)
     }
   else
     {
-      if (m_compressed)
+      if (m_compressed && !m_multiSta)
         {
           NS_FATAL_ERROR ("Multi-tid block ack is not supported.");
+        }
+      else if (m_compressed && !m_multiSta)
+        {
+          NS_FATAL_ERROR ("Multi-sta block ack is not supported.");
         }
       else
         {
@@ -559,9 +632,13 @@ CtrlBAckResponseHeader::SetReceivedPacket (uint16_t seq)
     }
   else
     {
-      if (m_compressed)
+      if (m_compressed && !m_multiSta)
         {
           NS_FATAL_ERROR ("Multi-tid block ack is not supported.");
+        }
+      else if (m_compressed && m_multiSta)
+        {
+          NS_FATAL_ERROR ("Multi-sta block ack is not supported.");
         }
       else
         {
@@ -592,9 +669,13 @@ CtrlBAckResponseHeader::SetReceivedFragment (uint16_t seq, uint8_t frag)
     }
   else
     {
-      if (m_compressed)
+      if (m_compressed && !m_multiSta)
         {
           NS_FATAL_ERROR ("Multi-tid block ack is not supported.");
+        }
+      else if (m_compressed && m_multiSta)
+        {
+          NS_FATAL_ERROR ("Multi-sta block ack is not supported.");
         }
       else
         {
@@ -625,9 +706,13 @@ CtrlBAckResponseHeader::IsPacketReceived (uint16_t seq) const
     }
   else
     {
-      if (m_compressed)
+      if (m_compressed && !m_multiSta)
         {
           NS_FATAL_ERROR ("Multi-tid block ack is not supported.");
+        }
+      else if (m_compressed && m_multiSta)
+        {
+          NS_FATAL_ERROR ("Multi-sta block ack is not supported.");
         }
       else
         {
