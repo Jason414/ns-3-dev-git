@@ -31,6 +31,7 @@
 #include <vector>
 #include <functional>
 #include <memory>
+#include <utility>
 
 /**
  * \file
@@ -39,16 +40,6 @@
  */
 
 namespace ns3 {
-
-// available in namespace std with C++14
-template <std::size_t...> struct index_sequence {};
-
-template <std::size_t N, std::size_t... Is>
-struct make_index_sequence : make_index_sequence<N - 1, N - 1, Is...> {};
-
-template <std::size_t... Is>
-struct make_index_sequence<0u, Is...> : index_sequence<Is...> { using type = index_sequence<Is...>; };
-
 
 // Define the doxygen subgroups all at once,
 // since the implementations are interleaved.
@@ -485,7 +476,7 @@ public:
    * of the first argument is a class derived from CallbackBase (i.e., a Callback).
    */
   template <typename T,
-            typename std::enable_if<!std::is_base_of<CallbackBase,T>::value,int>::type = 0,
+            std::enable_if_t<!std::is_base_of<CallbackBase,T>::value,int> = 0,
             typename... BArgs>
   Callback (T func, BArgs... bargs)
   {
@@ -494,7 +485,7 @@ public:
 
     // The original function is comparable if it is a function pointer or
     // a pointer to a member function or a pointer to a member data.
-    constexpr bool isComp = std::is_function<typename std::remove_pointer<T>::type>::value
+    constexpr bool isComp = std::is_function<std::remove_pointer_t<T>>::value
                             || std::is_member_pointer<T>::value;
 
     CallbackComponentVector components ({ std::make_shared<CallbackComponent<T,isComp>> (func),
@@ -519,8 +510,7 @@ private:
    * more readable.
    */
   template <std::size_t... I, typename... BoundArgs>
-  auto BindImpl (index_sequence<I...> seq, BoundArgs... bargs)
-    -> Callback<R,typename std::tuple_element<sizeof...(bargs)+I,std::tuple<UArgs...>>::type...>
+  auto BindImpl (std::index_sequence<I...> seq, BoundArgs... bargs)
   {
     return Callback<R,typename std::tuple_element<sizeof...(bargs)+I,std::tuple<UArgs...>>::type...>
                    (*this, bargs...);
@@ -536,10 +526,8 @@ public:
    */
   template <typename... BoundArgs>
   auto Bind (BoundArgs... bargs)
-    -> decltype (BindImpl (make_index_sequence<sizeof...(UArgs) - sizeof...(BoundArgs)>{},
-                           std::forward<BoundArgs> (bargs)...))
   {
-    return BindImpl (make_index_sequence<sizeof...(UArgs) - sizeof...(BoundArgs)>{},
+    return BindImpl (std::make_index_sequence<sizeof...(UArgs) - sizeof...(BoundArgs)>{},
                      std::forward<BoundArgs> (bargs)...);
   }
 
@@ -718,7 +706,6 @@ Callback<R,Ts...> MakeNullCallback (void) {
  */   
 template <typename R, typename... Args, typename... BArgs>
 auto MakeBoundCallback (R (*fnPtr)(Args...), BArgs... bargs)
-  -> decltype (Callback<R,Args...> (fnPtr).Bind (bargs...))
 {
   return Callback<R,Args...> (fnPtr).Bind (bargs...);
 }
@@ -734,14 +721,12 @@ auto MakeBoundCallback (R (*fnPtr)(Args...), BArgs... bargs)
  */
 template <typename T, typename OBJ, typename R, typename... Args, typename... BArgs>
 auto MakeCallback (R (T::*memPtr)(Args...), OBJ objPtr, BArgs... bargs)
-  -> decltype (Callback<R,Args...> (memPtr, objPtr).Bind (bargs...))
 {
   return Callback<R,Args...> (memPtr, objPtr).Bind (bargs...);
 }
 
 template <typename T, typename OBJ, typename R, typename... Args, typename... BArgs>
 auto MakeCallback (R (T::*memPtr)(Args...) const, OBJ objPtr, BArgs... bargs)
-  -> decltype (Callback<R,Args...> (memPtr, objPtr).Bind (bargs...))
 {
   return Callback<R,Args...> (memPtr, objPtr).Bind (bargs...);
 }
