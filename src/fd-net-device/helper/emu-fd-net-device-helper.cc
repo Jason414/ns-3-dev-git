@@ -362,7 +362,7 @@ EmuFdNetDeviceHelper::CreateFileDescriptor (void) const
       msg.msg_iov = &iov;
       msg.msg_iovlen = 1;
       msg.msg_control = control;
-      msg.msg_controllen = sizeof (control);
+      msg.msg_controllen = CMSG_SPACE (msg_size) * sizeof (char);
       msg.msg_flags = 0;
 
       //
