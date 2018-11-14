@@ -32,8 +32,8 @@ private:
   virtual void DoRun (void);
 
   void CbOne (uint8_t a, double b);
-  void CbTwo (uint8_t a, double b);
 
+  CallbackBase m_cbTwo;
   bool m_one;
   bool m_two;
 };
@@ -52,16 +52,16 @@ BasicTracedCallbackTestCase::CbOne (uint8_t a, double b)
 }
 
 void
-BasicTracedCallbackTestCase::CbTwo (uint8_t a, double b)
-{
-  NS_UNUSED (a);
-  NS_UNUSED (b);
-  m_two = true;
-}
-
-void
 BasicTracedCallbackTestCase::DoRun (void)
 {
+  //
+  // Disconnecting callbacks from a traced callback is based on the ability to
+  // compare callbacks. Given that lambdas cannot be compared, a callback
+  // pointing to a lambda needs to be stored to allow it to be disconnected
+  // later. Here we check that it is enough to store the callback as a CallbackBase.
+  //
+  m_cbTwo = Callback<void, uint8_t, double> ([this](uint8_t, double){ m_two = true; });
+
   //
   // Create a traced callback and connect it up to our target methods.  All that
   // these methods do is to set corresponding member variables m_one and m_two.
@@ -74,7 +74,7 @@ BasicTracedCallbackTestCase::DoRun (void)
   // to true.
   //
   trace.ConnectWithoutContext (MakeCallback (&BasicTracedCallbackTestCase::CbOne, this));
-  trace.ConnectWithoutContext (MakeCallback (&BasicTracedCallbackTestCase::CbTwo, this));
+  trace.ConnectWithoutContext (m_cbTwo);
   m_one = false;
   m_two = false;
   trace (1, 2);
@@ -94,7 +94,7 @@ BasicTracedCallbackTestCase::DoRun (void)
   //
   // If we now disconnect callback two then neither callback should be called.
   //
-  trace.DisconnectWithoutContext (MakeCallback (&BasicTracedCallbackTestCase::CbTwo, this));
+  trace.DisconnectWithoutContext (m_cbTwo);
   m_one = false;
   m_two = false;
   trace (1, 2);
@@ -105,7 +105,7 @@ BasicTracedCallbackTestCase::DoRun (void)
   // If we connect them back up, then both callbacks should be called.
   //
   trace.ConnectWithoutContext (MakeCallback (&BasicTracedCallbackTestCase::CbOne, this));
-  trace.ConnectWithoutContext (MakeCallback (&BasicTracedCallbackTestCase::CbTwo, this));
+  trace.ConnectWithoutContext (m_cbTwo);
   m_one = false;
   m_two = false;
   trace (1, 2);

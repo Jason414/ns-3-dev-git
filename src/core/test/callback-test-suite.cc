@@ -20,6 +20,7 @@
 #include "ns3/callback.h"
 #include "ns3/unused.h"
 #include <stdint.h>
+#include <cmath>
 
 using namespace ns3;
 
@@ -60,6 +61,7 @@ private:
 static bool gBasicCallbackTest5;
 static bool gBasicCallbackTest6;
 static bool gBasicCallbackTest7;
+static bool gBasicCallbackTest8;
 
 void 
 BasicCallbackTarget5 (void)
@@ -95,6 +97,7 @@ BasicCallbackTestCase::DoSetup (void)
   gBasicCallbackTest5 = false;
   gBasicCallbackTest6 = false;
   gBasicCallbackTest7 = false;
+  gBasicCallbackTest8 = false;
 }
 
 void
@@ -104,7 +107,7 @@ BasicCallbackTestCase::DoRun (void)
   // Make sure we can declare and compile a Callback pointing to a member 
   // function returning void and execute it.
   //
-  Callback<void> target1 (this, &BasicCallbackTestCase::Target1);
+  Callback<void> target1 (&BasicCallbackTestCase::Target1, this);
   target1 ();
   NS_TEST_ASSERT_MSG_EQ (m_test1, true, "Callback did not fire");
 
@@ -113,7 +116,7 @@ BasicCallbackTestCase::DoRun (void)
   // function that returns an int and execute it.
   //
   Callback<int> target2;
-  target2 = Callback<int> (this, &BasicCallbackTestCase::Target2);
+  target2 = Callback<int> (&BasicCallbackTestCase::Target2, this);
   target2 ();
   NS_TEST_ASSERT_MSG_EQ (m_test2, true, "Callback did not fire");
 
@@ -121,7 +124,7 @@ BasicCallbackTestCase::DoRun (void)
   // Make sure we can declare and compile a Callback pointing to a member 
   // function that returns void, takes a double parameter, and execute it.
   //
-  Callback<void, double> target3 = Callback<void, double> (this, &BasicCallbackTestCase::Target3);
+  Callback<void, double> target3 = Callback<void, double> (&BasicCallbackTestCase::Target3, this);
   target3 (0.0);
   NS_TEST_ASSERT_MSG_EQ (m_test3, true, "Callback did not fire");
 
@@ -129,38 +132,40 @@ BasicCallbackTestCase::DoRun (void)
   // Make sure we can declare and compile a Callback pointing to a member 
   // function that returns void, takes two parameters, and execute it.
   //
-  Callback<int, double, int> target4 = Callback<int, double, int> (this, &BasicCallbackTestCase::Target4);
+  Callback<int, double, int> target4 = Callback<int, double, int> (&BasicCallbackTestCase::Target4, this);
   target4 (0.0, 1);
   NS_TEST_ASSERT_MSG_EQ (m_test4, true, "Callback did not fire");
 
   //
   // Make sure we can declare and compile a Callback pointing to a non-member 
-  // function that returns void, and execute it.  This is a lower level call
-  // than MakeCallback so we have got to include at least two arguments to make
-  // sure that the constructor is properly disambiguated.  If the arguments are
-  // not needed, we just pass in dummy values.
+  // function that returns void, and execute it.
   //
-  Callback<void> target5 = Callback<void> (&BasicCallbackTarget5, true, true);
+  Callback<void> target5 = Callback<void> (&BasicCallbackTarget5);
   target5 ();
   NS_TEST_ASSERT_MSG_EQ (gBasicCallbackTest5, true, "Callback did not fire");
 
   //
   // Make sure we can declare and compile a Callback pointing to a non-member 
   // function that returns void, takes one integer argument and execute it.
-  // We also need to provide two dummy arguments to the constructor here.
   //
-  Callback<void, int> target6 = Callback<void, int> (&BasicCallbackTarget6, true, true);
+  Callback<void, int> target6 = Callback<void, int> (&BasicCallbackTarget6);
   target6 (1);
   NS_TEST_ASSERT_MSG_EQ (gBasicCallbackTest6, true, "Callback did not fire");
 
   //
   // Make sure we can declare and compile a Callback pointing to a non-member 
   // function that returns int, takes one integer argument and execute it.
-  // We also need to provide two dummy arguments to the constructor here.
   //
-  Callback<int, int> target7 = Callback<int, int> (&BasicCallbackTarget7, true, true);
+  Callback<int, int> target7 = Callback<int, int> (&BasicCallbackTarget7);
   target7 (1);
   NS_TEST_ASSERT_MSG_EQ (gBasicCallbackTest7, true, "Callback did not fire");
+
+  //
+  // Make sure we can create a callback pointing to a lambda.
+  //
+  Callback<double, int> target8 ([](int p){ gBasicCallbackTest8 = true; return p/2.; });
+  target8 (5);
+  NS_TEST_ASSERT_MSG_EQ (gBasicCallbackTest8, true, "Callback did not fire");
 }
 
 // ===========================================================================
@@ -311,6 +316,11 @@ class MakeBoundCallbackTestCase : public TestCase
 public:
   MakeBoundCallbackTestCase ();
   virtual ~MakeBoundCallbackTestCase () {}
+
+  int BoundTarget (int a, int b, int c)
+  {
+    return a+b+c;
+  }
 
 private:
   virtual void DoRun (void);
@@ -529,6 +539,154 @@ MakeBoundCallbackTestCase::DoRun (void)
   NS_TEST_ASSERT_MSG_EQ (gMakeBoundCallbackTest9b, 3456, "Callback did not fire or binding not correct");
   NS_TEST_ASSERT_MSG_EQ (gMakeBoundCallbackTest9c, 4567, "Callback did not fire or binding not correct");
   NS_TEST_ASSERT_MSG_EQ (gMakeBoundCallbackTest9d, 5678, "Callback did not fire or binding not correct");
+
+  //
+  // Test creating a bound callback pointing to a member function. Also, make sure that
+  // an argument can be bound to a reference.
+  //
+  int b = 1;
+  Callback<int> target10 = Callback<int> (&MakeBoundCallbackTestCase::BoundTarget, this, std::ref (b), 5, 2);
+  NS_TEST_ASSERT_MSG_EQ (target10 (), 8, "Bound callback returned an unexpected value");
+  b = 3;
+  NS_TEST_ASSERT_MSG_EQ (target10 (), 10, "Bound callback returned an unexpected value");
+}
+
+// ===========================================================================
+// Check the equality test
+// ===========================================================================
+
+class CallbackEqualityTestCase : public TestCase
+{
+public:
+  CallbackEqualityTestCase ();
+  virtual ~CallbackEqualityTestCase () {}
+
+  int TargetMember (double a, int b) 
+  { 
+    return std::round (a) + b;
+  }
+
+private:
+  virtual void DoRun (void);
+  virtual void DoSetup (void);
+};
+
+int
+CallbackEqualityTarget (double a, int b)
+{
+  return std::round (a) + b;
+}
+
+CallbackEqualityTestCase::CallbackEqualityTestCase ()
+  : TestCase ("Check Callback equality test")
+{
+}
+
+void
+CallbackEqualityTestCase::DoSetup (void)
+{
+}
+
+void
+CallbackEqualityTestCase::DoRun (void)
+{
+  //
+  // Make sure that two callbacks pointing to the same member function
+  // compare equal.
+  //
+  Callback<int, double, int> target1a (&CallbackEqualityTestCase::TargetMember, this);
+  Callback<int, double, int> target1b = MakeCallback (&CallbackEqualityTestCase::TargetMember, this);
+  NS_TEST_ASSERT_MSG_EQ (target1a.IsEqual (target1b), true, "Equality test failed");
+
+  //
+  // Make sure that two callbacks pointing to the same member function
+  // compare equal, after binding the first argument.
+  //
+  Callback<int, int> target2a (&CallbackEqualityTestCase::TargetMember, this, 1.5);
+  Callback<int, int> target2b = target1b.Bind (1.5);
+  NS_TEST_ASSERT_MSG_EQ (target2a.IsEqual (target2b), true, "Equality test failed");
+
+  //
+  // Make sure that two callbacks pointing to the same member function
+  // compare equal, after binding the first two arguments.
+  //
+  Callback<int> target3a (target2a, 2);
+  Callback<int> target3b = target1b.Bind (1.5, 2);
+  NS_TEST_ASSERT_MSG_EQ (target3a.IsEqual (target3b), true, "Equality test failed");
+
+  //
+  // Make sure that two callbacks pointing to the same member function do
+  // not compare equal if they are bound to different arguments.
+  //
+  Callback<int> target3c = target1b.Bind (1.5, 3);
+  NS_TEST_ASSERT_MSG_EQ (target3c.IsEqual (target3b), false, "Equality test failed");
+
+  //
+  // Make sure that two callbacks pointing to the same non-member function
+  // compare equal.
+  //
+  Callback<int, double, int> target4a (&CallbackEqualityTarget);
+  Callback<int, double, int> target4b = MakeCallback (&CallbackEqualityTarget);
+  NS_TEST_ASSERT_MSG_EQ (target4a.IsEqual (target4b), true, "Equality test failed");
+
+  //
+  // Make sure that two callbacks pointing to the same non-member function
+  // compare equal, after binding the first argument.
+  //
+  Callback<int, int> target5a (&CallbackEqualityTarget, 1.5);
+  Callback<int, int> target5b = target4b.Bind (1.5);
+  NS_TEST_ASSERT_MSG_EQ (target5a.IsEqual (target5b), true, "Equality test failed");
+
+  //
+  // Make sure that two callbacks pointing to the same non-member function
+  // compare equal, after binding the first two arguments.
+  //
+  Callback<int> target6a (target5a, 2);
+  Callback<int> target6b = target4b.Bind (1.5, 2);
+  NS_TEST_ASSERT_MSG_EQ (target6a.IsEqual (target6b), true, "Equality test failed");
+
+  //
+  // Make sure that two callbacks pointing to the same non-member function do
+  // not compare equal if they are bound to different arguments.
+  //
+  Callback<int> target6c = target4b.Bind (1.5, 3);
+  NS_TEST_ASSERT_MSG_EQ (target6c.IsEqual (target6b), false, "Equality test failed");
+
+  //
+  // Check that we cannot compare lambdas.
+  //
+  Callback<double, int, double> target7a ([](int p, double d){ return d + p/2.; });
+  Callback<double, int, double> target7b ([](int p, double d){ return d + p/2.; });
+  NS_TEST_ASSERT_MSG_EQ (target7a.IsEqual (target7b), false, "Compared lambdas?");
+
+  //
+  // Make sure that a callback pointing to a lambda and a copy of it compare equal.
+  //
+  Callback<double, int, double> target7c (target7b);
+  NS_TEST_ASSERT_MSG_EQ (target7c.IsEqual (target7b), true, "Equality test failed");
+
+  //
+  // Make sure that a callback pointing to a lambda and a copy of it compare equal,
+  // after binding the first argument.
+  //
+  Callback<double, int> target8b = target7b.Bind (1);
+  Callback<double, int> target8c (target7c, 1);
+  NS_TEST_ASSERT_MSG_EQ (target8b.IsEqual (target8c), true, "Equality test failed");
+
+  //
+  // Make sure that a callback pointing to a lambda and a copy of it compare equal,
+  // after binding the first two arguments.
+  //
+  Callback<double> target9b = target8b.Bind (2);
+  Callback<double> target9c (target8c, 2);
+  NS_TEST_ASSERT_MSG_EQ (target9b.IsEqual (target9c), true, "Equality test failed");
+
+  //
+  // Make sure that a callback pointing to a lambda and a copy of it do not compare
+  // equal if they are bound to different arguments.
+  //
+  Callback<double> target9d = target8b.Bind (4);
+  NS_TEST_ASSERT_MSG_EQ (target9d.IsEqual (target9c), false, "Equality test failed");
 }
 
 // ===========================================================================
@@ -724,6 +882,7 @@ CallbackTestSuite::CallbackTestSuite ()
   AddTestCase (new BasicCallbackTestCase, TestCase::QUICK);
   AddTestCase (new MakeCallbackTestCase, TestCase::QUICK);
   AddTestCase (new MakeBoundCallbackTestCase, TestCase::QUICK);
+  AddTestCase (new CallbackEqualityTestCase, TestCase::QUICK);
   AddTestCase (new NullifyCallbackTestCase, TestCase::QUICK);
   AddTestCase (new MakeCallbackTemplatesTestCase, TestCase::QUICK);
 }

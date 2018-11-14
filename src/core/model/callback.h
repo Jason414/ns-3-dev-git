@@ -24,11 +24,13 @@
 #include "ptr.h"
 #include "fatal-error.h"
 #include "empty.h"
-#include "type-traits.h"
 #include "attribute.h"
 #include "attribute-helper.h"
 #include "simple-ref-count.h"
 #include <typeinfo>
+#include <vector>
+#include <functional>
+#include <memory>
 
 /**
  * \file
@@ -37,6 +39,16 @@
  */
 
 namespace ns3 {
+
+// available in namespace std with C++14
+template <std::size_t...> struct index_sequence {};
+
+template <std::size_t N, std::size_t... Is>
+struct make_index_sequence : make_index_sequence<N - 1, N - 1, Is...> {};
+
+template <std::size_t... Is>
+struct make_index_sequence<0u, Is...> : index_sequence<Is...> { using type = index_sequence<Is...>; };
+
 
 // Define the doxygen subgroups all at once,
 // since the implementations are interleaved.
@@ -67,13 +79,11 @@ namespace ns3 {
  *   MakeCallback ( & MyClass::Handler, this);
  * \endcode
  *
- * There is not a version with bound arguments.  You may be able to
- * get the same result by using \c MakeBoundCallback with a \c static
- * member function, as in:
+ * The version with bound arguments is represented by the
+ * \c MakeBoundCallback functions:
  * \code
- *   MakeBoundCallback ( & MyClass::StaticHandler, this);
+ *   MakeBoundCallback ( & MyClass::Handler, this, barg);
  * \endcode
- * This still leaves two argument slots available for binding.
  */
 /**
  * \ingroup callback
@@ -103,34 +113,6 @@ namespace ns3 {
  */
 
   
-/**
- * \ingroup makecallbackmemptr
- *
- * Trait class to convert a pointer into a reference,
- * used by MemPtrCallBackImpl
- */
-template <typename T>
-struct CallbackTraits;
-
-/**
- * \ingroup makecallbackmemptr
- *
- * Trait class to convert a pointer into a reference,
- * used by MemPtrCallBackImpl
- */
-template <typename T>
-struct CallbackTraits<T *>
-{
-  /**
-   * \param [in] p Object pointer
-   * \return A reference to the object pointed to by p
-   */
-  static T & GetReference (T * const p)
-  {
-    return *p;
-  }
-};
-
 /**
  * \ingroup callbackimpl
  * Abstract base class for CallbackImpl
@@ -183,232 +165,176 @@ protected:
   }
 };
 
+
 /**
  * \ingroup callbackimpl
- * The unqualified CallbackImpl class
+ * Abstract base class for CallbackComponent.
+ * Provides equality test.
  */
-template <typename R, typename T1, typename T2, typename T3, typename T4, typename T5, typename T6, typename T7, typename T8, typename T9>
-class CallbackImpl;
-  
+class CallbackComponentBase
+{
+public:
+  /** Virtual destructor */
+  virtual ~CallbackComponentBase () {}
+  /**
+   * Equality test
+   *
+   * \param [in] other CallbackComponent Ptr
+   * \return \c true if we are equal
+   */
+  virtual bool IsEqual (std::shared_ptr<const CallbackComponentBase> other) const = 0;
+};
+
+/**
+ * \ingroup callbackimpl
+ * Stores a component of a callback, i.e., the callable object
+ * or a bound argument. The purpose of this class is to test
+ * the equality of the components of two callbacks.
+ */
+template <typename T, bool isComparable = true>
+class CallbackComponent : public CallbackComponentBase
+{
+public:
+  /**
+   * Constructor
+   *
+   * \param [in] t The value of the callback component
+   */
+  CallbackComponent (const T& t)
+    : m_comp (t) {}
+
+  /**
+   * Equality test between the values of two components
+   *
+   * \param [in] other CallbackComponentBase Ptr
+   * \return \c true if we are equal
+   */
+  bool IsEqual (std::shared_ptr<const CallbackComponentBase> other) const
+  {
+    auto p = std::dynamic_pointer_cast<const CallbackComponent<T>> (other);
+
+    // other must have the same type and value as ours
+    if (p == nullptr || p->m_comp != m_comp)
+      {
+        return false;
+      }
+
+    return true;
+  }
+
+private:
+    T m_comp;             //!< the value of the callback component
+};
+
+
+/**
+ * \ingroup callbackimpl
+ * Partial specialization of class CallbackComponent with isComparable equal
+ * to false. This is required to handle callable objects (such as lambdas and
+ * objects returned by std::function and std::bind) that do not provide the
+ * equality operator. Given that these objects cannot be compared and the only
+ * purpose of the class CallbackComponent is to compare values, no object is
+ * stored in this specialized class.
+ */
+template <typename T>
+class CallbackComponent<T, false> : public CallbackComponentBase
+{
+public:
+  /**
+   * Constructor
+   *
+   * \param [in] t The value of the callback component
+   */
+  CallbackComponent (const T& t) {}
+
+  /**
+   * Equality test between functions
+   *
+   * \param [in] other CallbackParam Ptr
+   * \return \c true if we are equal
+   */
+  bool IsEqual (std::shared_ptr<const CallbackComponentBase> other) const
+  {
+    return false;
+  }
+};
+
+/// Vector of callback components
+typedef std::vector<std::shared_ptr<CallbackComponentBase>> CallbackComponentVector;
+
 /**
  * \ingroup callbackimpl
  * CallbackImpl classes with varying numbers of argument types
  *
  * @{
  */
-/** CallbackImpl class with no arguments. */
-template <typename R>
-class CallbackImpl<R,empty,empty,empty,empty,empty,empty,empty,empty,empty> : public CallbackImplBase {
-public:
-  virtual ~CallbackImpl () {}
-  virtual R operator() (void) = 0;      //!< Abstract operator
-  virtual std::string GetTypeid (void) const
-  {
-    return DoGetTypeid ();
-  }
-  /** \copydoc GetTypeid(). */
-  static std::string DoGetTypeid (void)
-  {
-    static std::string id = "CallbackImpl<" +
-      GetCppTypeid<R> () +
-      ">";
-    return id;
-  }
-};
-/** CallbackImpl class with one argument. */
-template <typename R, typename T1>
-class CallbackImpl<R,T1,empty,empty,empty,empty,empty,empty,empty,empty> : public CallbackImplBase {
-public:
-  virtual ~CallbackImpl () {}
-  virtual R operator() (T1) = 0;        //!< Abstract operator
-  virtual std::string GetTypeid (void) const
-  {
-    return DoGetTypeid ();
-  }
-  /** \copydoc GetTypeid(). */
-  static std::string DoGetTypeid (void)
-  {
-    static std::string id = "CallbackImpl<" +
-      GetCppTypeid<R> () + "," +
-      GetCppTypeid<T1> () +
-      ">";
-    return id;
-  }
-};
-/** CallbackImpl class with two arguments. */
-template <typename R, typename T1, typename T2>
-class CallbackImpl<R,T1,T2,empty,empty,empty,empty,empty,empty,empty> : public CallbackImplBase {
-public:
-  virtual ~CallbackImpl () {}
-  virtual R operator() (T1, T2) = 0;    //!< Abstract operator
-  virtual std::string GetTypeid (void) const
-  {
-    return DoGetTypeid ();
-  }
-  /** \copydoc GetTypeid(). */
-  static std::string DoGetTypeid (void)
-  {
-    static std::string id = "CallbackImpl<" +
-      GetCppTypeid<R> () + "," +
-      GetCppTypeid<T1> () + "," +
-      GetCppTypeid<T2> () +
-      ">";
-    return id;
-  }
-};
-/** CallbackImpl class with three arguments. */
-template <typename R, typename T1, typename T2, typename T3>
-class CallbackImpl<R,T1,T2,T3,empty,empty,empty,empty,empty,empty> : public CallbackImplBase {
-public:
-  virtual ~CallbackImpl () {}
-  virtual R operator() (T1, T2, T3) = 0;  //!< Abstract operator
-  virtual std::string GetTypeid (void) const
-  {
-    return DoGetTypeid ();
-  }
-  /** \copydoc GetTypeid(). */
-  static std::string DoGetTypeid (void)
-  {
-    static std::string id = "CallbackImpl<" +
-      GetCppTypeid<R> () + "," +
-      GetCppTypeid<T1> () + "," +
-      GetCppTypeid<T2> () + "," +
-      GetCppTypeid<T3> () +
-      ">";
-    return id;
-  }
-};
-/** CallbackImpl class with four arguments. */
-template <typename R, typename T1, typename T2, typename T3, typename T4>
-class CallbackImpl<R,T1,T2,T3,T4,empty,empty,empty,empty,empty> : public CallbackImplBase {
-public:
-  virtual ~CallbackImpl () {}
-  virtual R operator() (T1, T2, T3, T4) = 0;  //!< Abstract operator
-  virtual std::string GetTypeid (void) const
-  {
-    return DoGetTypeid ();
-  }
-  /** \copydoc GetTypeid(). */
-  static std::string DoGetTypeid (void)
-  {
-    static std::string id = "CallbackImpl<" +
-      GetCppTypeid<R> () + "," +
-      GetCppTypeid<T1> () + "," +
-      GetCppTypeid<T2> () + "," +
-      GetCppTypeid<T3> () + "," +
-      GetCppTypeid<T4> () +
-      ">";
-    return id;
-  }
-};
-/** CallbackImpl class with five arguments. */
-template <typename R, typename T1, typename T2, typename T3, typename T4, typename T5>
-class CallbackImpl<R,T1,T2,T3,T4,T5,empty,empty,empty,empty> : public CallbackImplBase {
-public:
-  virtual ~CallbackImpl () {}
-  virtual R operator() (T1, T2, T3, T4, T5) = 0;  //!< Abstract operator
-  virtual std::string GetTypeid (void) const
-  {
-    return DoGetTypeid ();
-  }
-  /** \copydoc GetTypeid(). */
-  static std::string DoGetTypeid (void)
-  {
-    static std::string id = "CallbackImpl<" +
-      GetCppTypeid<R> () + "," +
-      GetCppTypeid<T1> () + "," +
-      GetCppTypeid<T2> () + "," +
-      GetCppTypeid<T3> () + "," +
-      GetCppTypeid<T4> () + "," +
-      GetCppTypeid<T5> () +
-      ">";
-    return id;
-  }
-};
-/** CallbackImpl class with six arguments. */
-template <typename R, typename T1, typename T2, typename T3, typename T4, typename T5, typename T6>
-class CallbackImpl<R,T1,T2,T3,T4,T5,T6,empty,empty,empty> : public CallbackImplBase {
-public:
-  virtual ~CallbackImpl () {}
-  virtual R operator() (T1, T2, T3, T4, T5, T6) = 0;  //!< Abstract operator
-  virtual std::string GetTypeid (void) const
-  {
-    return DoGetTypeid ();
-  }
-  /** \copydoc GetTypeid(). */
-  static std::string DoGetTypeid (void)
-  {
-    static std::string id = "CallbackImpl<" +
-      GetCppTypeid<R> () + "," +
-      GetCppTypeid<T1> () + "," +
-      GetCppTypeid<T2> () + "," +
-      GetCppTypeid<T3> () + "," +
-      GetCppTypeid<T4> () + "," +
-      GetCppTypeid<T5> () + "," +
-      GetCppTypeid<T6> () +
-      ">";
-    return id;
-  }
-};
-/** CallbackImpl class with seven arguments. */
-template <typename R, typename T1, typename T2, typename T3, typename T4, typename T5, typename T6, typename T7>
-class CallbackImpl<R,T1,T2,T3,T4,T5,T6,T7,empty,empty> : public CallbackImplBase {
-public:
-  virtual ~CallbackImpl () {}
-  virtual R operator() (T1, T2, T3, T4, T5, T6, T7) = 0;  //!< Abstract operator
-  virtual std::string GetTypeid (void) const
-  {
-    return DoGetTypeid ();
-  }
-  /** \copydoc GetTypeid(). */
-  static std::string DoGetTypeid (void)
-  {
-    static std::string id = "CallbackImpl<" +
-      GetCppTypeid<R> () + "," +
-      GetCppTypeid<T1> () + "," +
-      GetCppTypeid<T2> () + "," +
-      GetCppTypeid<T3> () + "," +
-      GetCppTypeid<T4> () + "," +
-      GetCppTypeid<T5> () + "," +
-      GetCppTypeid<T6> () + "," +
-      GetCppTypeid<T7> () +
-      ">";
-    return id;
-  }
-};
-/** CallbackImpl class with eight arguments. */
-template <typename R, typename T1, typename T2, typename T3, typename T4, typename T5, typename T6, typename T7, typename T8>
-class CallbackImpl<R,T1,T2,T3,T4,T5,T6,T7,T8,empty> : public CallbackImplBase {
-public:
-  virtual ~CallbackImpl () {}
-  virtual R operator() (T1, T2, T3, T4, T5, T6, T7, T8) = 0;  //!< Abstract operator
-  virtual std::string GetTypeid (void) const
-  {
-    return DoGetTypeid ();
-  }
-  /** \copydoc GetTypeid(). */
-  static std::string DoGetTypeid (void)
-  {
-    static std::string id = "CallbackImpl<" +
-      GetCppTypeid<R> () + "," +
-      GetCppTypeid<T1> () + "," +
-      GetCppTypeid<T2> () + "," +
-      GetCppTypeid<T3> () + "," +
-      GetCppTypeid<T4> () + "," +
-      GetCppTypeid<T5> () + "," +
-      GetCppTypeid<T6> () + "," +
-      GetCppTypeid<T7> () + "," +
-      GetCppTypeid<T8> () +
-      ">";
-    return id;
-  }
-};
-/** CallbackImpl class with nine arguments. */
-template <typename R, typename T1, typename T2, typename T3, typename T4, typename T5, typename T6, typename T7, typename T8, typename T9>
+/** CallbackImpl class. */
+template <typename R, typename... UArgs>
 class CallbackImpl : public CallbackImplBase {
 public:
+
+  CallbackImpl (std::function<R(UArgs...)> func,
+                const CallbackComponentVector& components)
+    : m_func (func), m_components (components)
+  {}
+
   virtual ~CallbackImpl () {}
-  virtual R operator() (T1, T2, T3, T4, T5, T6, T7, T8, T9) = 0;  //!< Abstract operator
+
+  /**
+   * Get the stored function.
+   * \return A const reference to the stored function.
+   */
+  const std::function<R(UArgs...)>& GetFunction (void) const
+  { return m_func; }
+
+  /**
+   * Get the vector of callback components.
+   * \return A const reference to the vector of callback components.
+   */
+  const CallbackComponentVector& GetComponents (void) const
+  { return m_components; }
+
+  R operator() (UArgs... uargs) const {
+    return m_func (uargs...);
+  }
+
+  virtual bool IsEqual (Ptr<const CallbackImplBase> other) const
+  {
+    CallbackImpl<R,UArgs...> const *otherDerived =
+      dynamic_cast<CallbackImpl<R,UArgs...> const *> (PeekPointer (other));
+
+    if (otherDerived == 0)
+      {
+        return false;
+      }
+
+    // if the two callback implementations are made of a distinct number of
+    // components, they are different
+    if (m_components.size () != otherDerived->GetComponents ().size ())
+      {
+        return false;
+      }
+
+    // the two functions are equal if they compare equal or the shared pointers
+    // point to the same locations
+    if (!m_components.at (0)->IsEqual (otherDerived->GetComponents ().at (0))
+        && m_components.at (0) != otherDerived->GetComponents ().at (0))
+    {
+      return false;
+    }
+
+    // check if the remaining components are equal one by one
+    for (std::size_t i = 1; i < m_components.size (); i++)
+      {
+        if (!m_components.at (i)->IsEqual (otherDerived->GetComponents ().at (i)))
+          {
+            return false;
+          }
+      }
+
+    return true;
+  }
+
   virtual std::string GetTypeid (void) const
   {
     return DoGetTypeid ();
@@ -416,685 +342,31 @@ public:
   /** \copydoc GetTypeid(). */
   static std::string DoGetTypeid (void)
   {
-    static std::string id = "CallbackImpl<" +
-      GetCppTypeid<R> () + "," +
-      GetCppTypeid<T1> () + "," +
-      GetCppTypeid<T2> () + "," +
-      GetCppTypeid<T3> () + "," +
-      GetCppTypeid<T4> () + "," +
-      GetCppTypeid<T5> () + "," +
-      GetCppTypeid<T6> () + "," +
-      GetCppTypeid<T7> () + "," +
-      GetCppTypeid<T8> () + "," +
-      GetCppTypeid<T9> () +
-      ">";
+    static std::vector<std::string> vec = { GetCppTypeid<R> (), GetCppTypeid<UArgs> ()... };
+
+    static std::string id ("CallbackImpl<");
+    for (auto& s : vec)
+      {
+        id.append (s + ",");
+      }
+    if (id.back () == ',')
+      {
+        id.pop_back ();
+      }
+    id.push_back ('>');
+
     return id;
   }
+
+private:
+  // Stores the callable object associated with this callback (as a lambda)
+  std::function<R(UArgs...)> m_func;
+
+  // Stores the original callable object and the bound arguments, if any
+  std::vector<std::shared_ptr<CallbackComponentBase>> m_components;
 };
 /**@}*/
 
-
-/**
- * \ingroup callbackimpl
- * CallbackImpl with functors
- */
-template <typename T, typename R, typename T1, typename T2, typename T3, typename T4,typename T5, typename T6, typename T7, typename T8, typename T9>
-class FunctorCallbackImpl : public CallbackImpl<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> {
-public:
-  /**
-   * Construct from a functor
-   *
-   * \param [in] functor The functor 
-   */
-  FunctorCallbackImpl (T const &functor)
-    : m_functor (functor) {}
-  virtual ~FunctorCallbackImpl () {}
-  /**
-   * Functor with varying numbers of arguments
-   * @{
-   */
-  /** \return Callback value */
-  R operator() (void) {
-    return m_functor ();
-  }
-  /**
-   * \param [in] a1 First argument
-   * \return Callback value
-   */
-  R operator() (T1 a1) {
-    return m_functor (a1);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2) {
-    return m_functor (a1,a2);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3) {
-    return m_functor (a1,a2,a3);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4) {
-    return m_functor (a1,a2,a3,a4);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5) {
-    return m_functor (a1,a2,a3,a4,a5);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5,T6 a6) {
-    return m_functor (a1,a2,a3,a4,a5,a6);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \param [in] a7 Seventh argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5,T6 a6,T7 a7) {
-    return m_functor (a1,a2,a3,a4,a5,a6,a7);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \param [in] a7 Seventh argument
-   * \param [in] a8 eighth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5,T6 a6,T7 a7,T8 a8) {
-    return m_functor (a1,a2,a3,a4,a5,a6,a7,a8);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \param [in] a7 Seventh argument
-   * \param [in] a8 eighth argument
-   * \param [in] a9 ninth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5,T6 a6,T7 a7,T8 a8,T9 a9) {
-    return m_functor (a1,a2,a3,a4,a5,a6,a7,a8,a9);
-  }
-  /**@}*/
-  /**
-   * Equality test.
-   *
-   * \param [in] other CallbackImpl Ptr
-   * \return \c true if this and other have the same functor
-   */
-  virtual bool IsEqual (Ptr<const CallbackImplBase> other) const {
-    FunctorCallbackImpl<T,R,T1,T2,T3,T4,T5,T6,T7,T8,T9> const *otherDerived = 
-      dynamic_cast<FunctorCallbackImpl<T,R,T1,T2,T3,T4,T5,T6,T7,T8,T9> const *> (PeekPointer (other));
-    if (otherDerived == 0)
-      {
-        return false;
-      }
-    else if (otherDerived->m_functor != m_functor)
-      {
-        return false;
-      }
-    return true;
-  }
-private:
-  T m_functor;                          //!< the functor
-};
-
-/**
- * \ingroup makecallbackmemptr
- * CallbackImpl for pointer to member functions
- */
-template <typename OBJ_PTR, typename MEM_PTR, typename R, typename T1, typename T2, typename T3, typename T4, typename T5, typename T6, typename T7, typename T8, typename T9>
-class MemPtrCallbackImpl : public CallbackImpl<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> {
-public:
-  /**
-   * Construct from an object pointer and member function pointer
-   *
-   * \param [in] objPtr The object pointer
-   * \param [in] memPtr The object class member function
-   */
-  MemPtrCallbackImpl (OBJ_PTR const&objPtr, MEM_PTR memPtr)
-    : m_objPtr (objPtr), m_memPtr (memPtr) {}
-  virtual ~MemPtrCallbackImpl () {}
-  /**
-   * Functor with varying numbers of arguments
-   * @{
-   */
-  /** \return Callback value */
-  R operator() (void) {
-    return ((CallbackTraits<OBJ_PTR>::GetReference (m_objPtr)).*m_memPtr)();
-  }
-  /**
-   * \param [in] a1 First argument
-   * \return Callback value
-   */
-  R operator() (T1 a1) {
-    return ((CallbackTraits<OBJ_PTR>::GetReference (m_objPtr)).*m_memPtr)(a1);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2) {
-    return ((CallbackTraits<OBJ_PTR>::GetReference (m_objPtr)).*m_memPtr)(a1, a2);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3) {
-    return ((CallbackTraits<OBJ_PTR>::GetReference (m_objPtr)).*m_memPtr)(a1, a2, a3);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4) {
-    return ((CallbackTraits<OBJ_PTR>::GetReference (m_objPtr)).*m_memPtr)(a1, a2, a3, a4);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5) {
-    return ((CallbackTraits<OBJ_PTR>::GetReference (m_objPtr)).*m_memPtr)(a1, a2, a3, a4, a5);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5,T6 a6) {
-    return ((CallbackTraits<OBJ_PTR>::GetReference (m_objPtr)).*m_memPtr)(a1, a2, a3, a4, a5, a6);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \param [in] a7 Seventh argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5,T6 a6,T7 a7) {
-    return ((CallbackTraits<OBJ_PTR>::GetReference (m_objPtr)).*m_memPtr)(a1, a2, a3, a4, a5, a6, a7);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \param [in] a7 Seventh argument
-   * \param [in] a8 Eighth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5,T6 a6,T7 a7,T8 a8) {
-    return ((CallbackTraits<OBJ_PTR>::GetReference (m_objPtr)).*m_memPtr)(a1, a2, a3, a4, a5, a6, a7, a8);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \param [in] a7 Seventh argument
-   * \param [in] a8 Eighth argument
-   * \param [in] a9 Ninth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5,T6 a6,T7 a7,T8 a8, T9 a9) {
-    return ((CallbackTraits<OBJ_PTR>::GetReference (m_objPtr)).*m_memPtr)(a1, a2, a3, a4, a5, a6, a7, a8, a9);
-  }
-  /**@}*/
-  /**
-   * Equality test.
-   *
-   * \param [in] other Callback Ptr
-   * \return \c true if we have the same object and member function
-   */
-  virtual bool IsEqual (Ptr<const CallbackImplBase> other) const {
-    MemPtrCallbackImpl<OBJ_PTR,MEM_PTR,R,T1,T2,T3,T4,T5,T6,T7,T8,T9> const *otherDerived = 
-      dynamic_cast<MemPtrCallbackImpl<OBJ_PTR,MEM_PTR,R,T1,T2,T3,T4,T5,T6,T7,T8,T9> const *> (PeekPointer (other));
-    if (otherDerived == 0)
-      {
-        return false;
-      }
-    else if (otherDerived->m_objPtr != m_objPtr ||
-             otherDerived->m_memPtr != m_memPtr)
-      {
-        return false;
-      }
-    return true;
-  }
-private:
-  OBJ_PTR const m_objPtr;               //!< the object pointer
-  MEM_PTR m_memPtr;                     //!< the member function pointer
-};
-
-/**
- * \ingroup callbackimpl
- * CallbackImpl for functors with first argument bound at construction
- */
-template <typename T, typename R, typename TX, typename T1, typename T2, typename T3, typename T4,typename T5, typename T6, typename T7, typename T8>
-class BoundFunctorCallbackImpl : public CallbackImpl<R,T1,T2,T3,T4,T5,T6,T7,T8,empty> {
-public:
-  /**
-   * Construct from functor and a bound argument
-   * \param [in] functor The functor 
-   * \param [in] a The argument to bind
-   */
-  template <typename FUNCTOR, typename ARG>
-  BoundFunctorCallbackImpl (FUNCTOR functor, ARG a)
-    : m_functor (functor), m_a (a) {}
-  virtual ~BoundFunctorCallbackImpl () {}
-  /**
-   * Functor with varying numbers of arguments
-   * @{
-   */
-  /** \return Callback value */
-  R operator() (void) {
-    return m_functor (m_a);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \return Callback value
-   */
-  R operator() (T1 a1) {
-    return m_functor (m_a,a1);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2) {
-    return m_functor (m_a,a1,a2);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3) {
-    return m_functor (m_a,a1,a2,a3);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4) {
-    return m_functor (m_a,a1,a2,a3,a4);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5) {
-    return m_functor (m_a,a1,a2,a3,a4,a5);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5,T6 a6) {
-    return m_functor (m_a,a1,a2,a3,a4,a5,a6);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \param [in] a7 Seventh argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5,T6 a6,T7 a7) {
-    return m_functor (m_a,a1,a2,a3,a4,a5,a6,a7);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \param [in] a7 Seventh argument
-   * \param [in] a8 Eighth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5,T6 a6,T7 a7,T8 a8) {
-    return m_functor (m_a,a1,a2,a3,a4,a5,a6,a7,a8);
-  }
-  /**@}*/
-  /**
-   * Equality test.
-   *
-   * \param [in] other Callback Ptr
-   * \return \c true if we have the same functor and bound arguments
-   */
-  virtual bool IsEqual (Ptr<const CallbackImplBase> other) const {
-    BoundFunctorCallbackImpl<T,R,TX,T1,T2,T3,T4,T5,T6,T7,T8> const *otherDerived = 
-      dynamic_cast<BoundFunctorCallbackImpl<T,R,TX,T1,T2,T3,T4,T5,T6,T7,T8> const *> (PeekPointer (other));
-    if (otherDerived == 0)
-      {
-        return false;
-      }
-    else if (otherDerived->m_functor != m_functor ||
-             otherDerived->m_a != m_a)
-      {
-        return false;
-      }
-    return true;
-  }
-private:
-  T m_functor;                          //!< The functor
-  typename TypeTraits<TX>::ReferencedType m_a;  //!< the bound argument
-};
-
-/**
- * \ingroup callbackimpl
- * CallbackImpl for functors with first two arguments bound at construction
- */
-template <typename T, typename R, typename TX1, typename TX2, typename T1, typename T2, typename T3, typename T4,typename T5, typename T6, typename T7>
-class TwoBoundFunctorCallbackImpl : public CallbackImpl<R,T1,T2,T3,T4,T5,T6,T7,empty,empty> {
-public:
-  /**
-   * Construct from functor and two arguments
-   * \param [in] functor The functor
-   * \param [in] arg1 The first argument to bind
-   * \param [in] arg2 The second argument to bind
-   */
-  template <typename FUNCTOR, typename ARG1, typename ARG2>
-  TwoBoundFunctorCallbackImpl (FUNCTOR functor, ARG1 arg1, ARG2 arg2)
-    : m_functor (functor), m_a1 (arg1), m_a2 (arg2) {}
-  virtual ~TwoBoundFunctorCallbackImpl () {}
-  /**
-   * Functor with varying numbers of arguments
-   * @{
-   */
-  /** \return Callback value */
-  R operator() (void) {
-    return m_functor (m_a1,m_a2);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \return Callback value
-   */
-  R operator() (T1 a1) {
-    return m_functor (m_a1,m_a2,a1);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2) {
-    return m_functor (m_a1,m_a2,a1,a2);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3) {
-    return m_functor (m_a1,m_a2,a1,a2,a3);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4) {
-    return m_functor (m_a1,m_a2,a1,a2,a3,a4);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5) {
-    return m_functor (m_a1,m_a2,a1,a2,a3,a4,a5);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5,T6 a6) {
-    return m_functor (m_a1,m_a2,a1,a2,a3,a4,a5,a6);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \param [in] a7 Seventh argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5,T6 a6,T7 a7) {
-    return m_functor (m_a1,m_a2,a1,a2,a3,a4,a5,a6,a7);
-  }
-  /**@}*/
-  /**
-   * Equality test.
-   *
-   * \param [in] other Callback Ptr
-   * \return \c true if we have the same functor and bound arguments
-   */
-  virtual bool IsEqual (Ptr<const CallbackImplBase> other) const {
-    TwoBoundFunctorCallbackImpl<T,R,TX1,TX2,T1,T2,T3,T4,T5,T6,T7> const *otherDerived = 
-      dynamic_cast<TwoBoundFunctorCallbackImpl<T,R,TX1,TX2,T1,T2,T3,T4,T5,T6,T7> const *> (PeekPointer (other));
-    if (otherDerived == 0)
-      {
-        return false;
-      }
-    else if (otherDerived->m_functor != m_functor ||
-             otherDerived->m_a1 != m_a1 || otherDerived->m_a2 != m_a2)
-      {
-        return false;
-      }
-    return true;
-  }
-private:
-  T m_functor;                                    //!< The functor
-  typename TypeTraits<TX1>::ReferencedType m_a1;  //!< first bound argument
-  typename TypeTraits<TX2>::ReferencedType m_a2;  //!< second bound argument
-};
-
-/**
- * \ingroup callbackimpl
- * CallbackImpl for functors with first three arguments bound at construction
- */
-template <typename T, typename R, typename TX1, typename TX2, typename TX3, typename T1, typename T2, typename T3, typename T4,typename T5, typename T6>
-class ThreeBoundFunctorCallbackImpl : public CallbackImpl<R,T1,T2,T3,T4,T5,T6,empty,empty,empty> {
-public:
-  /**
-   * Construct from functor and three arguments
-   * \param [in] functor The functor
-   * \param [in] arg1 The first argument to bind
-   * \param [in] arg2 The second argument to bind
-   * \param [in] arg3 The third argument to bind
-   */
-  template <typename FUNCTOR, typename ARG1, typename ARG2, typename ARG3>
-  ThreeBoundFunctorCallbackImpl (FUNCTOR functor, ARG1 arg1, ARG2 arg2, ARG3 arg3)
-    : m_functor (functor), m_a1 (arg1), m_a2 (arg2), m_a3 (arg3) {}
-  virtual ~ThreeBoundFunctorCallbackImpl () {}
-  /**
-   * Functor with varying numbers of arguments
-   * @{
-   */
-  /** \return Callback value */
-  R operator() (void) {
-    return m_functor (m_a1,m_a2,m_a3);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \return Callback value
-   */
-  R operator() (T1 a1) {
-    return m_functor (m_a1,m_a2,m_a3,a1);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2) {
-    return m_functor (m_a1,m_a2,m_a3,a1,a2);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3) {
-    return m_functor (m_a1,m_a2,m_a3,a1,a2,a3);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4) {
-    return m_functor (m_a1,m_a2,m_a3,a1,a2,a3,a4);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5) {
-    return m_functor (m_a1,m_a2,m_a3,a1,a2,a3,a4,a5);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1,T2 a2,T3 a3,T4 a4,T5 a5,T6 a6) {
-    return m_functor (m_a1,m_a2,m_a3,a1,a2,a3,a4,a5,a6);
-  }
-  /**@}*/
-  /**
-   * Equality test.
-   *
-   * \param [in] other Callback Ptr
-   * \return \c true if we have the same functor and bound arguments
-   */
-  virtual bool IsEqual (Ptr<const CallbackImplBase> other) const {
-    ThreeBoundFunctorCallbackImpl<T,R,TX1,TX2,TX3,T1,T2,T3,T4,T5,T6> const *otherDerived = 
-      dynamic_cast<ThreeBoundFunctorCallbackImpl<T,R,TX1,TX2,TX3,T1,T2,T3,T4,T5,T6> const *> (PeekPointer (other));
-    if (otherDerived == 0)
-      {
-        return false;
-      }
-    else if (otherDerived->m_functor != m_functor ||
-             otherDerived->m_a1 != m_a1 || otherDerived->m_a2 != m_a2 || otherDerived->m_a3 != m_a3)
-      {
-        return false;
-      }
-    return true;
-  }
-private:
-  T m_functor;                                    //!< The functor      
-  typename TypeTraits<TX1>::ReferencedType m_a1;  //!< first bound argument 
-  typename TypeTraits<TX2>::ReferencedType m_a2;  //!< second bound argument
-  typename TypeTraits<TX3>::ReferencedType m_a3;  //!< third bound argument
-};
 
 /**
  * \ingroup callbackimpl
@@ -1167,99 +439,108 @@ protected:
  *
  * \see attribute_Callback
  */
-template<typename R, 
-         typename T1 = empty, typename T2 = empty, 
-         typename T3 = empty, typename T4 = empty,
-         typename T5 = empty, typename T6 = empty,
-         typename T7 = empty, typename T8 = empty,
-         typename T9 = empty>
+template<typename R, typename... UArgs>
 class Callback : public CallbackBase {
 public:
   Callback () {}
-
-  /**
-   * Construct a functor call back, supporting operator() calls
-   *
-   * \param [in] functor The functor to run on this callback
-   *
-   * \internal
-   * There are two dummy args below to ensure that this constructor is
-   * always properly disambiguated by the c++ compiler.
-   */
-  template <typename FUNCTOR>
-  Callback (FUNCTOR const &functor, bool, bool) 
-    : CallbackBase (Create<FunctorCallbackImpl<FUNCTOR,R,T1,T2,T3,T4,T5,T6,T7,T8,T9> > (functor))
-  {}
-
-  /**
-   * Construct a member function pointer call back.
-   *
-   * \param [in] objPtr Pointer to the object
-   * \param [in] memPtr Pointer to the member function
-   */
-  template <typename OBJ_PTR, typename MEM_PTR>
-  Callback (OBJ_PTR const &objPtr, MEM_PTR memPtr)
-    : CallbackBase (Create<MemPtrCallbackImpl<OBJ_PTR,MEM_PTR,R,T1,T2,T3,T4,T5,T6,T7,T8,T9> > (objPtr, memPtr))
-  {}
 
   /**
    * Construct from a CallbackImpl pointer
    *
    * \param [in] impl The CallbackImpl Ptr
    */
-  Callback (Ptr<CallbackImpl<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> > const &impl)
+  Callback (Ptr<CallbackImpl<R,UArgs...>> const &impl)
     : CallbackBase (impl)
   {}
 
   /**
-   * Bind the first arguments
+   * Construct from another callback and bind some arguments (if any)
    *
-   * \param [in] a Argument to bind
-   * \return The bound callback
+   * \param [in] cb The existing callback
+   * \param [in] bargs The values of the bound arguments
    */
-  template <typename T>
-  Callback<R,T2,T3,T4,T5,T6,T7,T8,T9> Bind (T a) {
-    Ptr<CallbackImpl<R,T2,T3,T4,T5,T6,T7,T8,T9,empty> > impl =
-      Ptr<CallbackImpl<R,T2,T3,T4,T5,T6,T7,T8,T9,empty> > (
-        new BoundFunctorCallbackImpl<
-          Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9>,
-          R,T1,T2,T3,T4,T5,T6,T7,T8,T9> (*this, a), false);
-    return Callback<R,T2,T3,T4,T5,T6,T7,T8,T9> (impl);
+  template <typename... BArgs>
+  Callback (const CallbackBase& cb, BArgs... bargs)
+  {
+    auto cbDerived = static_cast<CallbackImpl<R,BArgs...,UArgs...> const *> (PeekPointer (cb.GetImpl ()));
+
+    std::function<R(BArgs...,UArgs...)> f (cbDerived->GetFunction ());
+
+    CallbackComponentVector components (cbDerived->GetComponents ());
+    components.insert (components.end (), { std::make_shared<CallbackComponent<BArgs>> (bargs)... });
+
+    m_impl = Create<CallbackImpl<R,UArgs...>> ([f,bargs...](UArgs... uargs) -> R
+                                                 { return f (bargs..., uargs...); },
+                                               components);
   }
 
   /**
-   * Bind the first two arguments
+   * Construct from a function and bind some arguments (if any)
    *
-   * \param [in] a1 First argument to bind
-   * \param [in] a2 Second argument to bind
-   * \return The bound callback
+   * \param [in] func The function
+   * \param [in] bargs The values of the bound arguments
+   *
+   * \internal
+   * We leverage SFINAE to have the compiler discard this constructor when the type
+   * of the first argument is a class derived from CallbackBase (i.e., a Callback).
    */
-  template <typename TX1, typename TX2>
-  Callback<R,T3,T4,T5,T6,T7,T8,T9> TwoBind (TX1 a1, TX2 a2) {
-    Ptr<CallbackImpl<R,T3,T4,T5,T6,T7,T8,T9,empty,empty> > impl =
-      Ptr<CallbackImpl<R,T3,T4,T5,T6,T7,T8,T9,empty,empty> > (
-        new TwoBoundFunctorCallbackImpl<
-          Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9>,
-          R,T1,T2,T3,T4,T5,T6,T7,T8,T9> (*this, a1, a2), false);
-    return Callback<R,T3,T4,T5,T6,T7,T8,T9> (impl);
+  template <typename T,
+            typename std::enable_if<!std::is_base_of<CallbackBase,T>::value,int>::type = 0,
+            typename... BArgs>
+  Callback (T func, BArgs... bargs)
+  {
+    // store the function in a std::function object
+    std::function<R(BArgs...,UArgs...)> f (func);
+
+    // The original function is comparable if it is a function pointer or
+    // a pointer to a member function or a pointer to a member data.
+    constexpr bool isComp = std::is_function<typename std::remove_pointer<T>::type>::value
+                            || std::is_member_pointer<T>::value;
+
+    CallbackComponentVector components ({ std::make_shared<CallbackComponent<T,isComp>> (func),
+                                          std::make_shared<CallbackComponent<BArgs>> (bargs)... });
+
+    m_impl = Create<CallbackImpl<R,UArgs...>> ([f,bargs...](UArgs... uargs) -> R
+                                                 { return f (bargs..., uargs...); },
+                                               components);
   }
 
+private:
   /**
-   * Bind the first three arguments
+   * Implementation of the Bind method
    *
-   * \param [in] a1 First argument to bind
-   * \param [in] a2 Second argument to bind
-   * \param [in] a3 Third argument to bind
+   * \param [in] seq A compile-time integer sequence
+   * \param [in] bargs The values of the arguments to bind
+   * \return The bound callback
+   *
+   * \internal
+   * The integer sequence is 0..N-1, where N is the number of arguments left unbound.
+   * C++14 enables automatic return type deduction, which would make this code
+   * more readable.
+   */
+  template <std::size_t... I, typename... BoundArgs>
+  auto BindImpl (index_sequence<I...> seq, BoundArgs... bargs)
+    -> Callback<R,typename std::tuple_element<sizeof...(bargs)+I,std::tuple<UArgs...>>::type...>
+  {
+    return Callback<R,typename std::tuple_element<sizeof...(bargs)+I,std::tuple<UArgs...>>::type...>
+                   (*this, bargs...);
+  }
+
+public:
+
+  /**
+   * Bind a variable number of arguments
+   *
+   * \param [in] bargs The values of the arguments to bind
    * \return The bound callback
    */
-  template <typename TX1, typename TX2, typename TX3>
-  Callback<R,T4,T5,T6,T7,T8,T9> ThreeBind (TX1 a1, TX2 a2, TX3 a3) {
-    Ptr<CallbackImpl<R,T4,T5,T6,T7,T8,T9,empty,empty,empty> > impl =
-      Ptr<CallbackImpl<R,T4,T5,T6,T7,T8,T9,empty,empty,empty> > (
-        new ThreeBoundFunctorCallbackImpl<
-          Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9>,
-          R,T1,T2,T3,T4,T5,T6,T7,T8,T9> (*this, a1, a2, a3), false);
-    return Callback<R,T4,T5,T6,T7,T8,T9> (impl);
+  template <typename... BoundArgs>
+  auto Bind (BoundArgs... bargs)
+    -> decltype (BindImpl (make_index_sequence<sizeof...(UArgs) - sizeof...(BoundArgs)>{},
+                           std::forward<BoundArgs> (bargs)...))
+  {
+    return BindImpl (make_index_sequence<sizeof...(UArgs) - sizeof...(BoundArgs)>{},
+                     std::forward<BoundArgs> (bargs)...);
   }
 
   /**
@@ -1280,107 +561,8 @@ public:
    * @{
    */
   /** \return Callback value */
-  R operator() (void) const {
-    return (*(DoPeekImpl ()))();
-  }
-  /**
-   * \param [in] a1 First argument
-   * \return Callback value
-   */
-  R operator() (T1 a1) const {
-    return (*(DoPeekImpl ()))(a1);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \return Callback value
-   */
-  R operator() (T1 a1, T2 a2) const {
-    return (*(DoPeekImpl ()))(a1,a2);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \return Callback value
-   */
-  R operator() (T1 a1, T2 a2, T3 a3) const {
-    return (*(DoPeekImpl ()))(a1,a2,a3);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1, T2 a2, T3 a3, T4 a4) const {
-    return (*(DoPeekImpl ()))(a1,a2,a3,a4);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1, T2 a2, T3 a3, T4 a4,T5 a5) const {
-    return (*(DoPeekImpl ()))(a1,a2,a3,a4,a5);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1, T2 a2, T3 a3, T4 a4,T5 a5,T6 a6) const {
-    return (*(DoPeekImpl ()))(a1,a2,a3,a4,a5,a6);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \param [in] a7 Seventh argument
-   * \return Callback value
-   */
-  R operator() (T1 a1, T2 a2, T3 a3, T4 a4,T5 a5,T6 a6,T7 a7) const {
-    return (*(DoPeekImpl ()))(a1,a2,a3,a4,a5,a6,a7);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \param [in] a7 Seventh argument
-   * \param [in] a8 Eighth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1, T2 a2, T3 a3, T4 a4,T5 a5,T6 a6,T7 a7,T8 a8) const {
-    return (*(DoPeekImpl ()))(a1,a2,a3,a4,a5,a6,a7,a8);
-  }
-  /**
-   * \param [in] a1 First argument
-   * \param [in] a2 Second argument
-   * \param [in] a3 Third argument
-   * \param [in] a4 Fourth argument
-   * \param [in] a5 Fifth argument
-   * \param [in] a6 Sixth argument
-   * \param [in] a7 Seventh argument
-   * \param [in] a8 Eighth argument
-   * \param [in] a9 Ninth argument
-   * \return Callback value
-   */
-  R operator() (T1 a1, T2 a2, T3 a3, T4 a4,T5 a5,T6 a6,T7 a7,T8 a8, T9 a9) const {
-    return (*(DoPeekImpl ()))(a1,a2,a3,a4,a5,a6,a7,a8,a9);
+  R operator() (UArgs... uargs) const {
+    return (*(DoPeekImpl ()))(uargs...);
   }
   /**@}*/
 
@@ -1414,8 +596,8 @@ public:
   }
 private:
   /** \return The pimpl pointer */
-  CallbackImpl<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> *DoPeekImpl (void) const {
-    return static_cast<CallbackImpl<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> *> (PeekPointer (m_impl));
+  CallbackImpl<R,UArgs...> *DoPeekImpl (void) const {
+    return static_cast<CallbackImpl<R,UArgs...> *> (PeekPointer (m_impl));
   }
   /**
    * Check for compatible types
@@ -1425,7 +607,7 @@ private:
    */
   bool DoCheckType (Ptr<const CallbackImplBase> other) const {
     if (other != 0 &&
-        dynamic_cast<const CallbackImpl<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> *> (PeekPointer (other)) != 0)
+        dynamic_cast<const CallbackImpl<R,UArgs...> *> (PeekPointer (other)) != 0)
       {
         return true;
       }
@@ -1443,7 +625,7 @@ private:
     if (!DoCheckType (other))
       {
         std::string othTid = other->GetTypeid ();
-        std::string myTid = CallbackImpl<R,T1,T2,T3,T4,T5,T6,T7,T8,T9>::DoGetTypeid ();
+        std::string myTid = CallbackImpl<R,UArgs...>::DoGetTypeid ();
         NS_FATAL_ERROR_CONT ("Incompatible types. (feed to \"c++filt -t\" if needed)" << std::endl <<
                         "got=" << othTid << std::endl <<
                         "expected=" << myTid);
@@ -1463,12 +645,8 @@ private:
  *
  * \return \c true if the Callbacks are not equal
  */
-template <typename R, typename T1, typename T2,
-          typename T3, typename T4,
-          typename T5, typename T6,
-          typename T7, typename T8,
-          typename T9>
-bool operator != (Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> a, Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> b)
+template <typename R, typename... Ts>
+bool operator != (Callback<R,Ts...> a, Callback<R,Ts...> b)
 {
   return !a.IsEqual (b);
 }
@@ -1485,85 +663,13 @@ bool operator != (Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> a, Callback<R,T1,T2,T3,
  * Build Callbacks for class method members which take varying numbers of arguments
  * and potentially returning a value.
  */     
-template <typename T, typename OBJ, typename R>
-Callback<R> MakeCallback (R (T::*memPtr)(void), OBJ objPtr) {
-  return Callback<R> (objPtr, memPtr);
+template <typename T, typename OBJ, typename R, typename... Ts>
+Callback<R,Ts...> MakeCallback (R (T::*memPtr)(Ts...), OBJ objPtr) {
+  return Callback<R,Ts...> (memPtr, objPtr);
 }
-template <typename T, typename OBJ, typename R>
-Callback<R> MakeCallback (R (T::*memPtr)() const, OBJ objPtr) {
-  return Callback<R> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1>
-Callback<R,T1> MakeCallback (R (T::*memPtr)(T1), OBJ objPtr) {
-  return Callback<R,T1> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1>
-Callback<R,T1> MakeCallback (R (T::*memPtr)(T1) const, OBJ objPtr) {
-  return Callback<R,T1> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1, typename T2>
-Callback<R,T1,T2> MakeCallback (R (T::*memPtr)(T1,T2), OBJ objPtr) {
-  return Callback<R,T1,T2> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1, typename T2>
-Callback<R,T1,T2> MakeCallback (R (T::*memPtr)(T1,T2) const, OBJ objPtr) {
-  return Callback<R,T1,T2> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1,typename T2, typename T3>
-Callback<R,T1,T2,T3> MakeCallback (R (T::*memPtr)(T1,T2,T3), OBJ objPtr) {
-  return Callback<R,T1,T2,T3> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1,typename T2, typename T3>
-Callback<R,T1,T2,T3> MakeCallback (R (T::*memPtr)(T1,T2,T3) const, OBJ objPtr) {
-  return Callback<R,T1,T2,T3> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1, typename T2, typename T3, typename T4>
-Callback<R,T1,T2,T3,T4> MakeCallback (R (T::*memPtr)(T1,T2,T3,T4), OBJ objPtr) {
-  return Callback<R,T1,T2,T3,T4> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1, typename T2, typename T3, typename T4>
-Callback<R,T1,T2,T3,T4> MakeCallback (R (T::*memPtr)(T1,T2,T3,T4) const, OBJ objPtr) {
-  return Callback<R,T1,T2,T3,T4> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1, typename T2, typename T3, typename T4,typename T5>
-Callback<R,T1,T2,T3,T4,T5> MakeCallback (R (T::*memPtr)(T1,T2,T3,T4,T5), OBJ objPtr) {
-  return Callback<R,T1,T2,T3,T4,T5> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1, typename T2, typename T3, typename T4,typename T5>
-Callback<R,T1,T2,T3,T4,T5> MakeCallback (R (T::*memPtr)(T1,T2,T3,T4,T5) const, OBJ objPtr) {
-  return Callback<R,T1,T2,T3,T4,T5> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1, typename T2, typename T3, typename T4,typename T5,typename T6>
-Callback<R,T1,T2,T3,T4,T5,T6> MakeCallback (R (T::*memPtr)(T1,T2,T3,T4,T5,T6), OBJ objPtr) {
-  return Callback<R,T1,T2,T3,T4,T5,T6> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1, typename T2, typename T3, typename T4,typename T5, typename T6>
-Callback<R,T1,T2,T3,T4,T5,T6> MakeCallback (R (T::*memPtr)(T1,T2,T3,T4,T5,T6) const, OBJ objPtr) {
-  return Callback<R,T1,T2,T3,T4,T5,T6> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1, typename T2, typename T3, typename T4,typename T5,typename T6, typename T7>
-Callback<R,T1,T2,T3,T4,T5,T6,T7> MakeCallback (R (T::*memPtr)(T1,T2,T3,T4,T5,T6,T7), OBJ objPtr) {
-  return Callback<R,T1,T2,T3,T4,T5,T6,T7> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1, typename T2, typename T3, typename T4,typename T5, typename T6, typename T7>
-Callback<R,T1,T2,T3,T4,T5,T6,T7> MakeCallback (R (T::*memPtr)(T1,T2,T3,T4,T5,T6,T7) const, OBJ objPtr) {
-  return Callback<R,T1,T2,T3,T4,T5,T6,T7> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1, typename T2, typename T3, typename T4,typename T5,typename T6, typename T7, typename T8>
-Callback<R,T1,T2,T3,T4,T5,T6,T7,T8> MakeCallback (R (T::*memPtr)(T1,T2,T3,T4,T5,T6,T7,T8), OBJ objPtr) {
-  return Callback<R,T1,T2,T3,T4,T5,T6,T7,T8> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1, typename T2, typename T3, typename T4,typename T5, typename T6, typename T7, typename T8>
-Callback<R,T1,T2,T3,T4,T5,T6,T7,T8> MakeCallback (R (T::*memPtr)(T1,T2,T3,T4,T5,T6,T7,T8) const, OBJ objPtr) {
-  return Callback<R,T1,T2,T3,T4,T5,T6,T7,T8> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1, typename T2, typename T3, typename T4,typename T5,typename T6, typename T7, typename T8, typename T9>
-Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> MakeCallback (R (T::*memPtr)(T1,T2,T3,T4,T5,T6,T7,T8,T9), OBJ objPtr) {
-  return Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> (objPtr, memPtr);
-}
-template <typename T, typename OBJ, typename R, typename T1, typename T2, typename T3, typename T4,typename T5, typename T6, typename T7, typename T8, typename T9>
-Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> MakeCallback (R (T::*memPtr)(T1,T2,T3,T4,T5,T6,T7,T8,T9) const, OBJ objPtr) {
-  return Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> (objPtr, memPtr);
+template <typename T, typename OBJ, typename R, typename... Ts>
+Callback<R,Ts...> MakeCallback (R (T::*memPtr)(Ts...) const, OBJ objPtr) {
+  return Callback<R,Ts...> (memPtr, objPtr);
 }
 /**@}*/
 
@@ -1578,45 +684,9 @@ Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> MakeCallback (R (T::*memPtr)(T1,T2,T3,T4,
  * Build Callbacks for functions which take varying numbers of arguments
  * and potentially returning a value.
  */
-template <typename R>
-Callback<R> MakeCallback (R (*fnPtr)()) {
-  return Callback<R> (fnPtr, true, true);
-}
-template <typename R, typename T1>
-Callback<R,T1> MakeCallback (R (*fnPtr)(T1)) {
-  return Callback<R,T1> (fnPtr, true, true);
-}
-template <typename R, typename T1, typename T2>
-Callback<R,T1,T2> MakeCallback (R (*fnPtr)(T1,T2)) {
-  return Callback<R,T1,T2> (fnPtr, true, true);
-}
-template <typename R, typename T1, typename T2,typename T3>
-Callback<R,T1,T2,T3> MakeCallback (R (*fnPtr)(T1,T2,T3)) {
-  return Callback<R,T1,T2,T3> (fnPtr, true, true);
-}
-template <typename R, typename T1, typename T2,typename T3,typename T4>
-Callback<R,T1,T2,T3,T4> MakeCallback (R (*fnPtr)(T1,T2,T3,T4)) {
-  return Callback<R,T1,T2,T3,T4> (fnPtr, true, true);
-}
-template <typename R, typename T1, typename T2,typename T3,typename T4,typename T5>
-Callback<R,T1,T2,T3,T4,T5> MakeCallback (R (*fnPtr)(T1,T2,T3,T4,T5)) {
-  return Callback<R,T1,T2,T3,T4,T5> (fnPtr, true, true);
-}
-template <typename R, typename T1, typename T2,typename T3,typename T4,typename T5,typename T6>
-Callback<R,T1,T2,T3,T4,T5,T6> MakeCallback (R (*fnPtr)(T1,T2,T3,T4,T5,T6)) {
-  return Callback<R,T1,T2,T3,T4,T5,T6> (fnPtr, true, true);
-}
-template <typename R, typename T1, typename T2,typename T3,typename T4,typename T5,typename T6, typename T7>
-Callback<R,T1,T2,T3,T4,T5,T6,T7> MakeCallback (R (*fnPtr)(T1,T2,T3,T4,T5,T6,T7)) {
-  return Callback<R,T1,T2,T3,T4,T5,T6,T7> (fnPtr, true, true);
-}
-template <typename R, typename T1, typename T2,typename T3,typename T4,typename T5,typename T6, typename T7, typename T8>
-Callback<R,T1,T2,T3,T4,T5,T6,T7,T8> MakeCallback (R (*fnPtr)(T1,T2,T3,T4,T5,T6,T7,T8)) {
-  return Callback<R,T1,T2,T3,T4,T5,T6,T7,T8> (fnPtr, true, true);
-}
-template <typename R, typename T1, typename T2,typename T3,typename T4,typename T5,typename T6, typename T7, typename T8, typename T9>
-Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> MakeCallback (R (*fnPtr)(T1,T2,T3,T4,T5,T6,T7,T8,T9)) {
-  return Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> (fnPtr, true, true);
+template <typename R, typename... Ts>
+Callback<R,Ts...> MakeCallback (R (*fnPtr)(Ts...)) {
+  return Callback<R,Ts...> (fnPtr);
 }
 /**@}*/
 
@@ -1631,45 +701,9 @@ Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> MakeCallback (R (*fnPtr)(T1,T2,T3,T4,T5,T
  * for varying number of template arguments,
  * and potentially returning a value.
  */     
-template <typename R>
-Callback<R> MakeNullCallback (void) {
-  return Callback<R> ();
-}
-template <typename R, typename T1>
-Callback<R,T1> MakeNullCallback (void) {
-  return Callback<R,T1> ();
-}
-template <typename R, typename T1, typename T2>
-Callback<R,T1,T2> MakeNullCallback (void) {
-  return Callback<R,T1,T2> ();
-}
-template <typename R, typename T1, typename T2,typename T3>
-Callback<R,T1,T2,T3> MakeNullCallback (void) {
-  return Callback<R,T1,T2,T3> ();
-}
-template <typename R, typename T1, typename T2,typename T3,typename T4>
-Callback<R,T1,T2,T3,T4> MakeNullCallback (void) {
-  return Callback<R,T1,T2,T3,T4> ();
-}
-template <typename R, typename T1, typename T2,typename T3,typename T4,typename T5>
-Callback<R,T1,T2,T3,T4,T5> MakeNullCallback (void) {
-  return Callback<R,T1,T2,T3,T4,T5> ();
-}
-template <typename R, typename T1, typename T2,typename T3,typename T4,typename T5,typename T6>
-Callback<R,T1,T2,T3,T4,T5,T6> MakeNullCallback (void) {
-  return Callback<R,T1,T2,T3,T4,T5,T6> ();
-}
-template <typename R, typename T1, typename T2,typename T3,typename T4,typename T5,typename T6, typename T7>
-Callback<R,T1,T2,T3,T4,T5,T6,T7> MakeNullCallback (void) {
-  return Callback<R,T1,T2,T3,T4,T5,T6,T7> ();
-}
-template <typename R, typename T1, typename T2,typename T3,typename T4,typename T5,typename T6, typename T7, typename T8>
-Callback<R,T1,T2,T3,T4,T5,T6,T7,T8> MakeNullCallback (void) {
-  return Callback<R,T1,T2,T3,T4,T5,T6,T7,T8> ();
-}
-template <typename R, typename T1, typename T2,typename T3,typename T4,typename T5,typename T6, typename T7, typename T8, typename T9>
-Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> MakeNullCallback (void) {
-  return Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> ();
+template <typename R, typename... Ts>
+Callback<R,Ts...> MakeNullCallback (void) {
+  return Callback<R,Ts...> ();
 }
 /**@}*/
 
@@ -1677,201 +711,41 @@ Callback<R,T1,T2,T3,T4,T5,T6,T7,T8,T9> MakeNullCallback (void) {
 /**
  * \ingroup makeboundcallback
  * @{
- * Make Callbacks with one bound argument.
+ * Make Callbacks with varying number of bound arguments.
  * \param [in] fnPtr Function pointer
- * \param [in] a1 First bound argument
+ * \param [in] bargs Bound arguments
  * \return A bound Callback
  */   
-template <typename R, typename TX, typename ARG>
-Callback<R> MakeBoundCallback (R (*fnPtr)(TX), ARG a1) {
-  Ptr<CallbackImpl<R,empty,empty,empty,empty,empty,empty,empty,empty,empty> > impl =
-    Create<BoundFunctorCallbackImpl<R (*)(TX),R,TX,empty,empty,empty,empty,empty,empty,empty,empty> >(fnPtr, a1);
-  return Callback<R> (impl);
+template <typename R, typename... Args, typename... BArgs>
+auto MakeBoundCallback (R (*fnPtr)(Args...), BArgs... bargs)
+  -> decltype (Callback<R,Args...> (fnPtr).Bind (bargs...))
+{
+  return Callback<R,Args...> (fnPtr).Bind (bargs...);
 }
-template <typename R, typename TX, typename ARG, 
-          typename T1>
-Callback<R,T1> MakeBoundCallback (R (*fnPtr)(TX,T1), ARG a1) {
-  Ptr<CallbackImpl<R,T1,empty,empty,empty,empty,empty,empty,empty,empty> > impl =
-    Create<BoundFunctorCallbackImpl<R (*)(TX,T1),R,TX,T1,empty,empty,empty,empty,empty,empty,empty> > (fnPtr, a1);
-  return Callback<R,T1> (impl);
-}
-template <typename R, typename TX, typename ARG, 
-          typename T1, typename T2>
-Callback<R,T1,T2> MakeBoundCallback (R (*fnPtr)(TX,T1,T2), ARG a1) {
-  Ptr<CallbackImpl<R,T1,T2,empty,empty,empty,empty,empty,empty,empty> > impl =
-    Create<BoundFunctorCallbackImpl<R (*)(TX,T1,T2),R,TX,T1,T2,empty,empty,empty,empty,empty,empty> > (fnPtr, a1);
-  return Callback<R,T1,T2> (impl);
-}
-template <typename R, typename TX, typename ARG,
-          typename T1, typename T2,typename T3>
-Callback<R,T1,T2,T3> MakeBoundCallback (R (*fnPtr)(TX,T1,T2,T3), ARG a1) {
-  Ptr<CallbackImpl<R,T1,T2,T3,empty,empty,empty,empty,empty,empty> > impl =
-    Create<BoundFunctorCallbackImpl<R (*)(TX,T1,T2,T3),R,TX,T1,T2,T3,empty,empty,empty,empty,empty> > (fnPtr, a1);
-  return Callback<R,T1,T2,T3> (impl);
-}
-template <typename R, typename TX, typename ARG,
-          typename T1, typename T2,typename T3,typename T4>
-Callback<R,T1,T2,T3,T4> MakeBoundCallback (R (*fnPtr)(TX,T1,T2,T3,T4), ARG a1) {
-  Ptr<CallbackImpl<R,T1,T2,T3,T4,empty,empty,empty,empty,empty> > impl =
-    Create<BoundFunctorCallbackImpl<R (*)(TX,T1,T2,T3,T4),R,TX,T1,T2,T3,T4,empty,empty,empty,empty> > (fnPtr, a1);
-  return Callback<R,T1,T2,T3,T4> (impl);
-}
-template <typename R, typename TX, typename ARG,
-          typename T1, typename T2,typename T3,typename T4,typename T5>
-Callback<R,T1,T2,T3,T4,T5> MakeBoundCallback (R (*fnPtr)(TX,T1,T2,T3,T4,T5), ARG a1) {
-  Ptr<CallbackImpl<R,T1,T2,T3,T4,T5,empty,empty,empty,empty> > impl =
-    Create<BoundFunctorCallbackImpl<R (*)(TX,T1,T2,T3,T4,T5),R,TX,T1,T2,T3,T4,T5,empty,empty,empty> > (fnPtr, a1);
-  return Callback<R,T1,T2,T3,T4,T5> (impl);
-}
-template <typename R, typename TX, typename ARG,
-          typename T1, typename T2,typename T3,typename T4,typename T5, typename T6>
-Callback<R,T1,T2,T3,T4,T5,T6> MakeBoundCallback (R (*fnPtr)(TX,T1,T2,T3,T4,T5,T6), ARG a1) {
-  Ptr<CallbackImpl<R,T1,T2,T3,T4,T5,T6,empty,empty,empty> > impl =
-    Create<BoundFunctorCallbackImpl<R (*)(TX,T1,T2,T3,T4,T5,T6),R,TX,T1,T2,T3,T4,T5,T6,empty,empty> > (fnPtr, a1);
-  return Callback<R,T1,T2,T3,T4,T5,T6> (impl);
-}
-template <typename R, typename TX, typename ARG,
-          typename T1, typename T2,typename T3,typename T4,typename T5, typename T6, typename T7>
-Callback<R,T1,T2,T3,T4,T5,T6,T7> MakeBoundCallback (R (*fnPtr)(TX,T1,T2,T3,T4,T5,T6,T7), ARG a1) {
-  Ptr<CallbackImpl<R,T1,T2,T3,T4,T5,T6,T7,empty,empty> > impl =
-    Create<BoundFunctorCallbackImpl<R (*)(TX,T1,T2,T3,T4,T5,T6,T7),R,TX,T1,T2,T3,T4,T5,T6,T7,empty> > (fnPtr, a1);
-  return Callback<R,T1,T2,T3,T4,T5,T6,T7> (impl);
-}
-template <typename R, typename TX, typename ARG,
-          typename T1, typename T2,typename T3,typename T4,typename T5, typename T6, typename T7, typename T8>
-Callback<R,T1,T2,T3,T4,T5,T6,T7,T8> MakeBoundCallback (R (*fnPtr)(TX,T1,T2,T3,T4,T5,T6,T7,T8), ARG a1) {
-  Ptr<CallbackImpl<R,T1,T2,T3,T4,T5,T6,T7,T8,empty> > impl =
-    Create<BoundFunctorCallbackImpl<R (*)(TX,T1,T2,T3,T4,T5,T6,T7,T8),R,TX,T1,T2,T3,T4,T5,T6,T7,T8> > (fnPtr, a1);
-  return Callback<R,T1,T2,T3,T4,T5,T6,T7,T8> (impl);
-}
-/**@}*/
 
 /**
- * \ingroup makeboundcallback
- * @{
- * Make Callbacks with two bound arguments.
- * \param [in] fnPtr Function pointer
- * \param [in] a1 First bound argument
- * \param [in] a2 Second bound argument 
- * \return A bound Callback
+ * \param [in] memPtr Class method member pointer
+ * \param [in] objPtr Class instance
+ * \param [in] bargs Bound arguments
+ * \return A wrapper Callback
+ *
+ * Build Callbacks for class method members which take varying numbers of arguments
+ * and potentially returning a value.
  */
-template <typename R, typename TX1, typename TX2, typename ARG1, typename ARG2>
-Callback<R> MakeBoundCallback (R (*fnPtr)(TX1,TX2), ARG1 a1, ARG2 a2) {
-  Ptr<CallbackImpl<R,empty,empty,empty,empty,empty,empty,empty,empty,empty> > impl =
-    Create<TwoBoundFunctorCallbackImpl<R (*)(TX1,TX2),R,TX1,TX2,empty,empty,empty,empty,empty,empty,empty> >(fnPtr, a1, a2);
-  return Callback<R> (impl);
+template <typename T, typename OBJ, typename R, typename... Args, typename... BArgs>
+auto MakeCallback (R (T::*memPtr)(Args...), OBJ objPtr, BArgs... bargs)
+  -> decltype (Callback<R,Args...> (memPtr, objPtr).Bind (bargs...))
+{
+  return Callback<R,Args...> (memPtr, objPtr).Bind (bargs...);
 }
-template <typename R, typename TX1, typename TX2, typename ARG1, typename ARG2,
-          typename T1>
-Callback<R,T1> MakeBoundCallback (R (*fnPtr)(TX1,TX2,T1), ARG1 a1, ARG2 a2) {
-  Ptr<CallbackImpl<R,T1,empty,empty,empty,empty,empty,empty,empty,empty> > impl =
-    Create<TwoBoundFunctorCallbackImpl<R (*)(TX1,TX2,T1),R,TX1,TX2,T1,empty,empty,empty,empty,empty,empty> > (fnPtr, a1, a2);
-  return Callback<R,T1> (impl);
-}
-template <typename R, typename TX1, typename TX2, typename ARG1, typename ARG2,
-          typename T1, typename T2>
-Callback<R,T1,T2> MakeBoundCallback (R (*fnPtr)(TX1,TX2,T1,T2), ARG1 a1, ARG2 a2) {
-  Ptr<CallbackImpl<R,T1,T2,empty,empty,empty,empty,empty,empty,empty> > impl =
-    Create<TwoBoundFunctorCallbackImpl<R (*)(TX1,TX2,T1,T2),R,TX1,TX2,T1,T2,empty,empty,empty,empty,empty> > (fnPtr, a1, a2);
-  return Callback<R,T1,T2> (impl);
-}
-template <typename R, typename TX1, typename TX2, typename ARG1, typename ARG2,
-          typename T1, typename T2,typename T3>
-Callback<R,T1,T2,T3> MakeBoundCallback (R (*fnPtr)(TX1,TX2,T1,T2,T3), ARG1 a1, ARG2 a2) {
-  Ptr<CallbackImpl<R,T1,T2,T3,empty,empty,empty,empty,empty,empty> > impl =
-    Create<TwoBoundFunctorCallbackImpl<R (*)(TX1,TX2,T1,T2,T3),R,TX1,TX2,T1,T2,T3,empty,empty,empty,empty> > (fnPtr, a1, a2);
-  return Callback<R,T1,T2,T3> (impl);
-}
-template <typename R, typename TX1, typename TX2, typename ARG1, typename ARG2,
-          typename T1, typename T2,typename T3,typename T4>
-Callback<R,T1,T2,T3,T4> MakeBoundCallback (R (*fnPtr)(TX1,TX2,T1,T2,T3,T4), ARG1 a1, ARG2 a2) {
-  Ptr<CallbackImpl<R,T1,T2,T3,T4,empty,empty,empty,empty,empty> > impl =
-    Create<TwoBoundFunctorCallbackImpl<R (*)(TX1,TX2,T1,T2,T3,T4),R,TX1,TX2,T1,T2,T3,T4,empty,empty,empty> > (fnPtr, a1, a2);
-  return Callback<R,T1,T2,T3,T4> (impl);
-}
-template <typename R, typename TX1, typename TX2, typename ARG1, typename ARG2,
-          typename T1, typename T2,typename T3,typename T4,typename T5>
-Callback<R,T1,T2,T3,T4,T5> MakeBoundCallback (R (*fnPtr)(TX1,TX2,T1,T2,T3,T4,T5), ARG1 a1, ARG2 a2) {
-  Ptr<CallbackImpl<R,T1,T2,T3,T4,T5,empty,empty,empty,empty> > impl =
-    Create<TwoBoundFunctorCallbackImpl<R (*)(TX1,TX2,T1,T2,T3,T4,T5),R,TX1,TX2,T1,T2,T3,T4,T5,empty,empty> > (fnPtr, a1, a2);
-  return Callback<R,T1,T2,T3,T4,T5> (impl);
-}
-template <typename R, typename TX1, typename TX2, typename ARG1, typename ARG2,
-          typename T1, typename T2,typename T3,typename T4,typename T5, typename T6>
-Callback<R,T1,T2,T3,T4,T5,T6> MakeBoundCallback (R (*fnPtr)(TX1,TX2,T1,T2,T3,T4,T5,T6), ARG1 a1, ARG2 a2) {
-  Ptr<CallbackImpl<R,T1,T2,T3,T4,T5,T6,empty,empty,empty> > impl =
-    Create<TwoBoundFunctorCallbackImpl<R (*)(TX1,TX2,T1,T2,T3,T4,T5,T6),R,TX1,TX2,T1,T2,T3,T4,T5,T6,empty> > (fnPtr, a1, a2);
-  return Callback<R,T1,T2,T3,T4,T5,T6> (impl);
-}
-template <typename R, typename TX1, typename TX2, typename ARG1, typename ARG2,
-          typename T1, typename T2,typename T3,typename T4,typename T5, typename T6, typename T7>
-Callback<R,T1,T2,T3,T4,T5,T6,T7> MakeBoundCallback (R (*fnPtr)(TX1,TX2,T1,T2,T3,T4,T5,T6,T7), ARG1 a1, ARG2 a2) {
-  Ptr<CallbackImpl<R,T1,T2,T3,T4,T5,T6,T7,empty,empty> > impl =
-    Create<TwoBoundFunctorCallbackImpl<R (*)(TX1,TX2,T1,T2,T3,T4,T5,T6,T7),R,TX1,TX2,T1,T2,T3,T4,T5,T6,T7> > (fnPtr, a1, a2);
-  return Callback<R,T1,T2,T3,T4,T5,T6,T7> (impl);
+
+template <typename T, typename OBJ, typename R, typename... Args, typename... BArgs>
+auto MakeCallback (R (T::*memPtr)(Args...) const, OBJ objPtr, BArgs... bargs)
+  -> decltype (Callback<R,Args...> (memPtr, objPtr).Bind (bargs...))
+{
+  return Callback<R,Args...> (memPtr, objPtr).Bind (bargs...);
 }
 /**@}*/
-
-/**
- * \ingroup makeboundcallback
- * @{
- * Make Callbacks with three bound arguments.
- * \param [in] a1 First bound argument
- * \param [in] a2 Second bound argument 
- * \param [in] a3 Third bound argument 
- * \param [in] fnPtr Function pointer
- * \return A bound Callback
- */
-template <typename R, typename TX1, typename TX2, typename TX3, typename ARG1, typename ARG2, typename ARG3>
-Callback<R> MakeBoundCallback (R (*fnPtr)(TX1,TX2,TX3), ARG1 a1, ARG2 a2, ARG3 a3) {
-  Ptr<CallbackImpl<R,empty,empty,empty,empty,empty,empty,empty,empty,empty> > impl =
-    Create<ThreeBoundFunctorCallbackImpl<R (*)(TX1,TX2,TX3),R,TX1,TX2,TX3,empty,empty,empty,empty,empty,empty> >(fnPtr, a1, a2, a3);
-  return Callback<R> (impl);
-}
-template <typename R, typename TX1, typename TX2, typename TX3, typename ARG1, typename ARG2, typename ARG3,
-          typename T1>
-Callback<R,T1> MakeBoundCallback (R (*fnPtr)(TX1,TX2,TX3,T1), ARG1 a1, ARG2 a2, ARG3 a3) {
-  Ptr<CallbackImpl<R,T1,empty,empty,empty,empty,empty,empty,empty,empty> > impl =
-    Create<ThreeBoundFunctorCallbackImpl<R (*)(TX1,TX2,TX3,T1),R,TX1,TX2,TX3,T1,empty,empty,empty,empty,empty> > (fnPtr, a1, a2, a3);
-  return Callback<R,T1> (impl);
-}
-template <typename R, typename TX1, typename TX2, typename TX3, typename ARG1, typename ARG2, typename ARG3,
-          typename T1, typename T2>
-Callback<R,T1,T2> MakeBoundCallback (R (*fnPtr)(TX1,TX2,TX3,T1,T2), ARG1 a1, ARG2 a2, ARG3 a3) {
-  Ptr<CallbackImpl<R,T1,T2,empty,empty,empty,empty,empty,empty,empty> > impl =
-    Create<ThreeBoundFunctorCallbackImpl<R (*)(TX1,TX2,TX3,T1,T2),R,TX1,TX2,TX3,T1,T2,empty,empty,empty,empty> > (fnPtr, a1, a2, a3);
-  return Callback<R,T1,T2> (impl);
-}
-template <typename R, typename TX1, typename TX2, typename TX3, typename ARG1, typename ARG2, typename ARG3,
-          typename T1, typename T2,typename T3>
-Callback<R,T1,T2,T3> MakeBoundCallback (R (*fnPtr)(TX1,TX2,TX3,T1,T2,T3), ARG1 a1, ARG2 a2, ARG3 a3) {
-  Ptr<CallbackImpl<R,T1,T2,T3,empty,empty,empty,empty,empty,empty> > impl =
-    Create<ThreeBoundFunctorCallbackImpl<R (*)(TX1,TX2,TX3,T1,T2,T3),R,TX1,TX2,TX3,T1,T2,T3,empty,empty,empty> > (fnPtr, a1, a2, a3);
-  return Callback<R,T1,T2,T3> (impl);
-}
-template <typename R, typename TX1, typename TX2, typename TX3, typename ARG1, typename ARG2, typename ARG3,
-          typename T1, typename T2,typename T3,typename T4>
-Callback<R,T1,T2,T3,T4> MakeBoundCallback (R (*fnPtr)(TX1,TX2,TX3,T1,T2,T3,T4), ARG1 a1, ARG2 a2, ARG3 a3) {
-  Ptr<CallbackImpl<R,T1,T2,T3,T4,empty,empty,empty,empty,empty> > impl =
-    Create<ThreeBoundFunctorCallbackImpl<R (*)(TX1,TX2,TX3,T1,T2,T3,T4),R,TX1,TX2,TX3,T1,T2,T3,T4,empty,empty> > (fnPtr, a1, a2, a3);
-  return Callback<R,T1,T2,T3,T4> (impl);
-}
-template <typename R, typename TX1, typename TX2, typename TX3, typename ARG1, typename ARG2, typename ARG3,
-          typename T1, typename T2,typename T3,typename T4,typename T5>
-Callback<R,T1,T2,T3,T4,T5> MakeBoundCallback (R (*fnPtr)(TX1,TX2,TX3,T1,T2,T3,T4,T5), ARG1 a1, ARG2 a2, ARG3 a3) {
-  Ptr<CallbackImpl<R,T1,T2,T3,T4,T5,empty,empty,empty,empty> > impl =
-    Create<ThreeBoundFunctorCallbackImpl<R (*)(TX1,TX2,TX3,T1,T2,T3,T4,T5),R,TX1,TX2,TX3,T1,T2,T3,T4,T5,empty> > (fnPtr, a1, a2, a3);
-  return Callback<R,T1,T2,T3,T4,T5> (impl);
-}
-template <typename R, typename TX1, typename TX2, typename TX3, typename ARG1, typename ARG2, typename ARG3,
-          typename T1, typename T2,typename T3,typename T4,typename T5, typename T6>
-Callback<R,T1,T2,T3,T4,T5,T6> MakeBoundCallback (R (*fnPtr)(TX1,TX2,TX3,T1,T2,T3,T4,T5,T6), ARG1 a1, ARG2 a2, ARG3 a3) {
-  Ptr<CallbackImpl<R,T1,T2,T3,T4,T5,T6,empty,empty,empty> > impl =
-    Create<ThreeBoundFunctorCallbackImpl<R (*)(TX1,TX2,TX3,T1,T2,T3,T4,T5,T6),R,TX1,TX2,TX3,T1,T2,T3,T4,T5,T6> > (fnPtr, a1, a2, a3);
-  return Callback<R,T1,T2,T3,T4,T5,T6> (impl);
-}
-/**@}*/
-
 
 } // namespace ns3
 
